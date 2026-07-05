@@ -18,9 +18,11 @@ import java.util.Objects;
  * <p>Turn flow after a roll: the token moves per {@link Board#resolve}; landing
  * exactly on 63 wins; landing on the inn (19) traps the player for one missed
  * turn; landing on the well (31) or prison (52) traps until another player
- * lands there and takes the place. If every remaining player is held in the
- * well/prison at once the game deadlocks (no {@code TurnStarted} is emitted) —
- * a faithful, if merciless, reading of the classic rules.
+ * lands there and takes the place — with one exception: the last free player
+ * never gets trapped. Without it, two trapped players (well + prison) freeze
+ * the game forever; instead the lander rests on the square unharmed and play
+ * continues. (Players at the inn don't count as trapped for this rule — the
+ * rotation frees them by itself.)
  */
 public final class GameEngine {
 
@@ -104,7 +106,7 @@ public final class GameEngine {
             events.add(new Event.GameWon(gameId, now, player));
             return List.copyOf(events);
         }
-        if (Board.traps(landed)) {
+        if (Board.traps(landed) && !freezesTheGame(state, player, landed)) {
             events.add(new Event.PlayerStuck(gameId, now, player, landed));
             if (Board.holdsUntilReplaced(landed)) {
                 state.stuck().entrySet().stream()
@@ -120,6 +122,27 @@ public final class GameEngine {
         }
         events.addAll(advanceTurn(after, now));
         return List.copyOf(events);
+    }
+
+    /**
+     * True when trapping {@code lander} on {@code landed} would leave nobody
+     * able to move — every other player already held in the well/prison and no
+     * occupant on this square for the swap to free. In that case the trap is
+     * waived: the last free player never gets stuck.
+     */
+    private static boolean freezesTheGame(GameState state, String lander, int landed) {
+        if (!Board.holdsUntilReplaced(landed)) {
+            return false; // the inn releases by itself; it can never freeze the game
+        }
+        if (state.stuck().containsValue(landed)) {
+            return false; // the swap frees the occupant, so someone stays free
+        }
+        return state.players().stream()
+                .filter(player -> !player.equals(lander))
+                .allMatch(player -> {
+                    Integer square = state.stuck().get(player);
+                    return square != null && Board.holdsUntilReplaced(square);
+                });
     }
 
     /**
@@ -148,7 +171,9 @@ public final class GameEngine {
                 }
             }
         }
-        // Every player is held in the well or the prison: deadlock, no next turn.
+        // Unreachable through decide() since the last free player never gets
+        // trapped, but a replayed log predating that rule could still fold to
+        // an all-trapped state: emit no turn rather than a wrong one.
         return events;
     }
 }

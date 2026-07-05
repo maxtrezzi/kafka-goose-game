@@ -71,3 +71,22 @@ compile scope.
 
 **Fix:** each module that logs declares `slf4j-simple` explicitly (version managed
 by the parent), matching what `server` already did. Added to `client-core/pom.xml`.
+
+## 7. The documented well+prison deadlock happened in the FIRST live game (Step 7)
+
+**Symptom:** smoke-testing the TUI against the real cluster (two scripted clients,
+random server dice), alice fell into the well, then bob goose-hopped 45→52 into the
+prison. Both players trapped, nobody left to free anyone: game frozen, exactly the
+corner case Step 4 had documented as "faithful, if merciless" and accepted as
+improbable. One game later it fired — with 2 players it is a live risk, not a
+curiosity.
+
+**Fix (user decision):** rule amendment — **the last free player never gets
+trapped**. `GameEngine.freezesTheGame(...)` waives the trap when landing on an
+unoccupied well/prison while every other player is held in one (inn players count
+as recoverable). Pinned by `lastFreePlayerIsNeverTrapped` and
+`trapStillAppliesWhileAnotherPlayerIsFree`. The all-trapped branch in
+`advanceTurn` stays as a defensive path for logs predating the rule.
+
+**Lesson:** "improbable" corner cases in a 2-player game with ~20% trap density are
+not improbable. The smoke test earned its keep on day one.

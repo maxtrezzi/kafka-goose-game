@@ -38,8 +38,11 @@ Newest entries at the bottom of each section.
   player they're freed (`PlayerFreed`) but skipped once; the rotation reaches them
   normally next time. In a 2-player game the opponent therefore rolls twice in a row.
 - **Well (31) / prison (52) swap occupants**: lander becomes stuck, previous occupant
-  freed. Faithful classic rule; corner case: if *every* remaining player is trapped
-  at once, the game deadlocks (no `TurnStarted`) — documented, accepted.
+  freed. Exception added 2026-07-03 after the deadlock actually occurred in the first
+  live smoke game (see ISSUES.md #7): **the last free player never gets trapped** —
+  landing on an unoccupied well/prison while every other player is held there waives
+  the trap, so the game can never freeze. Inn players don't count as trapped for this
+  rule (the rotation frees them by itself).
 - **`GameStarted` implies the first turn** (it carries `firstPlayer`); no redundant
   `TurnStarted` at game start.
 - **`decide` folds its own events through `GameState.apply` before computing the next
@@ -100,6 +103,22 @@ Newest entries at the bottom of each section.
   hardcoding strings. Caveat: `docker-compose.yml`'s `init-topics` service still
   spells them as YAML — renaming a topic means changing `Topics.java` *and* the
   compose file together.
+
+## TUI client (Step 7)
+
+- **`BoardRenderer` is pure** (`GameView` → ANSI string, no I/O): the board layout is
+  unit-testable by stripping ANSI codes; `Main` owns all console I/O.
+- **Serpentine convention**: square 1 bottom-left, rows of 9, direction alternating,
+  63 top-left region — matches the classic board's snake.
+- **ANSI escapes written as `\u001B` unicode escapes** in source, never raw ESC
+  bytes — invisible control characters in source files are a maintenance hazard.
+- **kafka-clients logging forced to `warn`** (`org.slf4j.simpleLogger.defaultLogLevel`
+  set in `Main`) so INFO chatter doesn't scribble over the board.
+- **Blind rolls are safe**: out-of-turn `RollDice` produces no events, so a client
+  can be driven by a dumb script (pipe `roll` every second) — which is exactly how
+  the automated smoke test plays full games through the real stack.
+- **`join <name>` switches identity**: subsequent `start`/`roll` act as that player;
+  default identity is the sanitized OS user name.
 
 ## Build / workflow
 

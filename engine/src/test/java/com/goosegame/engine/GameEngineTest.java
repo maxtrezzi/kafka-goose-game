@@ -243,6 +243,35 @@ class GameEngineTest {
     }
 
     @Test
+    void lastFreePlayerIsNeverTrapped() {
+        // alice is already in the well; bob (the only free player) lands in the
+        // unoccupied prison — the trap is waived so the game cannot freeze
+        var state = at(running("alice", "bob"), "alice", 31)
+                .apply(new Event.PlayerStuck(GAME, NOW, "alice", 31))
+                .apply(new Event.TurnStarted(GAME, NOW, "bob"));
+        state = at(state, "bob", 50);
+
+        assertEquals(List.of(
+                new Event.DiceRolled(GAME, NOW, "bob", 1, 1),
+                new Event.PlayerMoved(GAME, NOW, "bob", 50, 52, MoveReason.NORMAL),
+                new Event.TurnStarted(GAME, NOW, "bob")),
+                engine.decide(state, new Command.RollDice(GAME, "bob"), dice(1, 1)));
+    }
+
+    @Test
+    void trapStillAppliesWhileAnotherPlayerIsFree() {
+        // alice in the well, but carol is free: bob landing in prison IS trapped
+        var state = at(running("alice", "bob", "carol"), "alice", 31)
+                .apply(new Event.PlayerStuck(GAME, NOW, "alice", 31))
+                .apply(new Event.TurnStarted(GAME, NOW, "bob"));
+        state = at(state, "bob", 50);
+
+        var events = engine.decide(state, new Command.RollDice(GAME, "bob"), dice(1, 1));
+        assertEquals(new Event.PlayerStuck(GAME, NOW, "bob", 52), events.get(2));
+        assertEquals(new Event.TurnStarted(GAME, NOW, "carol"), events.getLast());
+    }
+
+    @Test
     void fullScriptedGameEndsWithAWinner() {
         var state = running("alice", "bob");
         var random = new Random(7);

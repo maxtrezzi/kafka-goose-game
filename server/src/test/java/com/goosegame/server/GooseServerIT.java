@@ -5,6 +5,7 @@ import com.goosegame.engine.GameState;
 import com.goosegame.protocol.Command;
 import com.goosegame.protocol.Event;
 import com.goosegame.protocol.JsonSerde;
+import com.goosegame.protocol.Topics;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -116,7 +117,7 @@ class GooseServerIT {
              var events = new KafkaConsumer<String, Event>(
                      consumerConfig(), new StringDeserializer(), new JsonSerde<>(Event.class))) {
 
-            events.subscribe(List.of(GooseServer.EVENTS_TOPIC));
+            events.subscribe(List.of(Topics.EVENTS));
             send(commands, new Command.JoinGame(GAME, "alice"));
             send(commands, new Command.JoinGame(GAME, "bob"));
             send(commands, new Command.StartGame(GAME, "alice"));
@@ -141,7 +142,7 @@ class GooseServerIT {
     }
 
     private static void send(KafkaProducer<String, Command> producer, Command command) {
-        producer.send(new ProducerRecord<>(GooseServer.COMMANDS_TOPIC, command.gameId(), command));
+        producer.send(new ProducerRecord<>(Topics.COMMANDS, command.gameId(), command));
         producer.flush();
     }
 
@@ -162,8 +163,8 @@ class GooseServerIT {
     private static void createTopics() throws Exception {
         try (Admin admin = Admin.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()))) {
             admin.createTopics(List.of(
-                    new NewTopic(GooseServer.COMMANDS_TOPIC, 3, (short) 1),
-                    new NewTopic(GooseServer.EVENTS_TOPIC, 3, (short) 1))).all().get();
+                    new NewTopic(Topics.COMMANDS, 3, (short) 1),
+                    new NewTopic(Topics.EVENTS, 3, (short) 1))).all().get();
         }
     }
 

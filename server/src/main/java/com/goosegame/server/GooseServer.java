@@ -6,6 +6,7 @@ import com.goosegame.engine.GameState;
 import com.goosegame.protocol.Command;
 import com.goosegame.protocol.Event;
 import com.goosegame.protocol.JsonSerde;
+import com.goosegame.protocol.Topics;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -64,9 +65,6 @@ import java.util.random.RandomGenerator;
  * seeking past them, never crashing the loop.
  */
 public final class GooseServer implements AutoCloseable {
-
-    public static final String COMMANDS_TOPIC = "game.commands";
-    public static final String EVENTS_TOPIC = "game.events";
 
     private static final String GROUP_ID = "goose-server";
     private static final Duration POLL_TIMEOUT = Duration.ofMillis(500);
@@ -147,14 +145,14 @@ public final class GooseServer implements AutoCloseable {
         try (var consumer = new KafkaConsumer<>(
                 replayConfig(), new StringDeserializer(), new JsonSerde<>(Event.class))) {
             activeConsumer.set(consumer);
-            List<PartitionInfo> infos = consumer.partitionsFor(EVENTS_TOPIC);
+            List<PartitionInfo> infos = consumer.partitionsFor(Topics.EVENTS);
             if (infos == null || infos.isEmpty()) {
                 throw new IllegalStateException(
                         "topic '%s' does not exist — is the cluster up and init-topics done?"
-                                .formatted(EVENTS_TOPIC));
+                                .formatted(Topics.EVENTS));
             }
             List<TopicPartition> partitions = infos.stream()
-                    .map(info -> new TopicPartition(EVENTS_TOPIC, info.partition()))
+                    .map(info -> new TopicPartition(Topics.EVENTS, info.partition()))
                     .toList();
             consumer.assign(partitions);
             consumer.seekToBeginning(partitions);
@@ -184,7 +182,7 @@ public final class GooseServer implements AutoCloseable {
         try (var consumer = new KafkaConsumer<>(
                 commandsConfig(), new StringDeserializer(), new JsonSerde<>(Command.class))) {
             activeConsumer.set(consumer);
-            consumer.subscribe(List.of(COMMANDS_TOPIC));
+            consumer.subscribe(List.of(Topics.COMMANDS));
             while (running) {
                 ConsumerRecords<String, Command> records = poll(consumer);
                 if (records.isEmpty()) {
@@ -217,7 +215,7 @@ public final class GooseServer implements AutoCloseable {
             return;
         }
         for (Event event : events) {
-            pending.add(producer.send(new ProducerRecord<>(EVENTS_TOPIC, event.gameId(), event)));
+            pending.add(producer.send(new ProducerRecord<>(Topics.EVENTS, event.gameId(), event)));
         }
         for (Event event : events) {
             applyEvent(event);

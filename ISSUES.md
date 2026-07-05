@@ -62,3 +62,12 @@ event field in a future version would have poisoned every not-yet-upgraded consu
 
 **Fix:** made the policy explicit (`false`, forward-compatible) with a why-comment
 and a pinning test. See DECISIONS.md for the reasoning.
+
+## 6. `package org.slf4j does not exist` in client-core (Step 6)
+
+**Symptom:** first compile of `GameClient` failed — slf4j is not on the classpath.
+`kafka-clients` uses slf4j internally but does not expose it transitively at
+compile scope.
+
+**Fix:** each module that logs declares `slf4j-simple` explicitly (version managed
+by the parent), matching what `server` already did. Added to `client-core/pom.xml`.

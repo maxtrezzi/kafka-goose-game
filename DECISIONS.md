@@ -76,6 +76,31 @@ Newest entries at the bottom of each section.
   with exactly one `RollDice` — no sleeps, no state guessing. Server runs on a
   virtual thread, per plan.
 
+## Client core (Step 6)
+
+- **`GameView` re-implements the event fold** instead of reusing the engine's
+  `GameState`: PLAN.md fixes `client-core → protocol` only (a client needs no game
+  rules on its classpath). Deliberate duplication of fold semantics; the wire
+  protocol — not a shared class — is the contract keeping the two folds in
+  agreement, and the shared protocol tests are what guard it.
+- **Fresh consumer group + `earliest` on every client start**, offsets never
+  committed: a client (re)started mid-game rebuilds its whole view by replay. The
+  Kafka log is the source of truth; the client keeps nothing.
+- **Listener callbacks run on the client's event-loop virtual thread**, in log
+  order; a listener exception is logged and skipped — a UI bug must not stop the
+  event stream. UIs needing their own thread hand off themselves.
+- **`GameClient.connect(...)` static factory** rather than a public constructor:
+  the event-loop thread is created unstarted in the constructor and started only
+  after construction completes — no `this`-escape from a constructor.
+- **`flush()` after every command**: human-scale traffic, prompt delivery beats
+  batching.
+- **`GameView.recentEvents` caps at 10** — display log for UIs, oldest first.
+- **Topic names live in `protocol.Topics`** (`Topics.COMMANDS`/`Topics.EVENTS`) —
+  they are wire contract, so server and clients share one definition instead of
+  hardcoding strings. Caveat: `docker-compose.yml`'s `init-topics` service still
+  spells them as YAML — renaming a topic means changing `Topics.java` *and* the
+  compose file together.
+
 ## Build / workflow
 
 - **Failsafe activated only in `server`** — `*IT` tests (need Docker) run at

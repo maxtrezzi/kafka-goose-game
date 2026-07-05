@@ -16,7 +16,7 @@ step off and commit. Never start the next step without an explicit user go-ahead
 - [x] Step 3 — `protocol` module (messages + Ser/Des)
 - [x] Step 4 — `engine` module (game rules)
 - [x] Step 5 — `server` module + E2E test
-- [ ] Step 6 — `client-core` module
+- [x] Step 6 — `client-core` module
 - [ ] Step 7 — `client-tui` module (playable!)
 - [ ] Step 8 — README + final verification
 

@@ -35,4 +35,30 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <!-- Testcontainers 1.21.3 ships a shaded docker-java that requests
+                 Docker API 1.32, which daemons >= 29 reject (minimum 1.40).
+                 The shaded client honors this property; drop it once a
+                 Testcontainers release raises its default. -->
+            <api.version>1.44</api.version>
+          </systemPropertyVariables>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

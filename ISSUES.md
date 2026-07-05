@@ -90,3 +90,20 @@ as recoverable). Pinned by `lastFreePlayerIsNeverTrapped` and
 
 **Lesson:** "improbable" corner cases in a 2-player game with ~20% trap density are
 not improbable. The smoke test earned its keep on day one.
+
+## 8. The broker-kill test raced the game and lost (Step 8)
+
+**Symptom:** the final-verification orchestrator waited for `GameStarted`, slept a
+few seconds, then stopped `goose-kafka-2` "mid-game" — but blind-roll games finish
+in ~90 seconds, and setup latency meant the `GameWon` was already in the log before
+the broker went down. The observed "moves kept flowing" (15 → 15) proved nothing:
+the game was FINISHED, the server was rejecting every roll anyway.
+
+**Fix:** invert the test into a stronger claim that can't race: stop the broker
+*first*, then play an **entire game** (`final-2`) start-to-win with only 2 of 3
+brokers alive (`min.insync.replicas=2` still satisfiable), then restart the broker
+and watch the ISR heal to `1,2,3` on every partition.
+
+**Lesson:** timing-based fault injection against a fast workload silently tests
+nothing; making the fault a *precondition* instead of an *interruption* removes the
+race entirely.

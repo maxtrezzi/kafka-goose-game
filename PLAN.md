@@ -18,7 +18,7 @@ step off and commit. Never start the next step without an explicit user go-ahead
 - [x] Step 5 — `server` module + E2E test
 - [x] Step 6 — `client-core` module
 - [x] Step 7 — `client-tui` module (playable!)
-- [ ] Step 8 — README + final verification
+- [x] Step 8 — README + final verification
 
 ## Fixed decisions (do not revisit)
 

@@ -127,3 +127,15 @@ Newest entries at the bottom of each section.
 - **Generate → skill review → fix-all → re-review → approve → commit** loop per
   PLAN.md step, with the `java-best-practices-modern` skill active for both
   generation and review (saved to memory 2026-07-03).
+
+## Docs / final verification (Step 8)
+
+- **Broker-kill resilience is demonstrated as a precondition, not an
+  interruption**: the verification game (`final-2`) is played start-to-win with
+  `kafka-2` stopped the whole time, then the broker rejoins and the ISR heals.
+  Stopping a broker "mid-game" raced the ~90-second blind-roll games and could
+  silently test a finished game (ISSUES.md #8).
+- **SASL/SCRAM + ACLs stays an exercise, not an implementation** (README §5):
+  the cluster is deliberately PLAINTEXT so every CLI experiment works without
+  credential ceremony; the README sketches the hardening path (clients write
+  commands only / read events only) instead of shipping it.

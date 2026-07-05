@@ -12,8 +12,8 @@ step off and commit. Never start the next step without an explicit user go-ahead
 ## Status
 
 - [x] Step 1 — Project scaffolding
-- [ ] Step 2 — Kafka cluster (docker compose)
-- [ ] Step 3 — `protocol` module (messages + Ser/Des)
+- [x] Step 2 — Kafka cluster (docker compose)
+- [x] Step 3 — `protocol` module (messages + Ser/Des)
 - [ ] Step 4 — `engine` module (game rules)
 - [ ] Step 5 — `server` module + E2E test
 - [ ] Step 6 — `client-core` module

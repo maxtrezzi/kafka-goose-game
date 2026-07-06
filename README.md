@@ -176,7 +176,14 @@ exercise: add a `SASL_PLAINTEXT` listener with SCRAM-SHA-256, create
 `game.events`, while the server gets the inverse — encoding
 "clients propose, the server decides" at the broker level.
 
-## Project log
+## Documentation
+
+The full top-down implementation documentation lives in
+[`docs/`](docs/00-overview.md): architecture, one chapter per layer,
+infrastructure, testing strategy, and a catalog of the patterns applied and
+anti-patterns avoided — with the design motivations for each choice.
+
+Project logs:
 
 - [PLAN.md](PLAN.md) — the 8-step implementation plan this was built from
 - [DECISIONS.md](DECISIONS.md) — every non-obvious design call, with reasoning

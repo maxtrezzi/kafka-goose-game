@@ -135,6 +135,12 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   `kafka-2` stopped the whole time, then the broker rejoins and the ISR heals.
   Stopping a broker "mid-game" raced the ~90-second blind-roll games and could
   silently test a finished game (ISSUES.md #8).
+- **The PDF build is committed as `docs/build-pdf.sh` + `docs/pdf.css`**, not
+  kept as a shell one-liner: the first PDF was produced by an invocation nobody
+  wrote down, so the layout had to be reverse-engineered from the PDF itself
+  (page geometry, font sizes and colours measured with `pdftotext -bbox` /
+  `pdftohtml -xml`) to regenerate it. The script also drops the inter-chapter
+  `[← prev · next →]` links, which are navigation on GitHub and noise on paper.
 - **SASL/SCRAM + ACLs stays an exercise, not an implementation** (README §5):
   the cluster is deliberately PLAINTEXT so every CLI experiment works without
   credential ceremony; the README sketches the hardening path (clients write

@@ -1,8 +1,8 @@
 # Decision Log
 
-Non-obvious choices made during implementation, with the reasoning. PLAN.md fixes
-the big architecture; this file records the calls made *inside* those boundaries.
-Newest entries at the bottom of each section.
+Non-obvious choices made during implementation, with the reasoning. The
+implementation plan fixes the big architecture; this file records the calls
+made *inside* those boundaries. Newest entries at the bottom of each section.
 
 ## Protocol (Step 3)
 
@@ -82,10 +82,10 @@ Newest entries at the bottom of each section.
 ## Client core (Step 6)
 
 - **`GameView` re-implements the event fold** instead of reusing the engine's
-  `GameState`: PLAN.md fixes `client-core → protocol` only (a client needs no game
-  rules on its classpath). Deliberate duplication of fold semantics; the wire
-  protocol — not a shared class — is the contract keeping the two folds in
-  agreement, and the shared protocol tests are what guard it.
+  `GameState`: the implementation plan fixes `client-core → protocol` only (a
+  client needs no game rules on its classpath). Deliberate duplication of fold
+  semantics; the wire protocol — not a shared class — is the contract keeping
+  the two folds in agreement, and the shared protocol tests are what guard it.
 - **Fresh consumer group + `earliest` on every client start**, offsets never
   committed: a client (re)started mid-game rebuilds its whole view by replay. The
   Kafka log is the source of truth; the client keeps nothing.
@@ -125,7 +125,7 @@ Newest entries at the bottom of each section.
 - **Failsafe activated only in `server`** — `*IT` tests (need Docker) run at
   `verify`, unit tests stay in `test`; `mvn test` never requires Docker.
 - **Generate → skill review → fix-all → re-review → approve → commit** loop per
-  PLAN.md step, with the `java-best-practices-modern` skill active for both
+  plan step, with the `java-best-practices-modern` skill active for both
   generation and review (saved to memory 2026-07-03).
 
 ## Docs / final verification (Step 8)

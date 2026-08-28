@@ -71,10 +71,10 @@ tests (`lastFreePlayerIsNeverTrapped`, `trapStillAppliesWhileAnotherPlayerIsFree
 — live testing finds, unit tests pin.
 
 The same blind-roll harness became the **final verification** rig
-(PLAN.md Step 8): clean `mvn verify`, fresh cluster, then complete games
-through the real compose cluster — including one played start-to-win with a
-broker stopped the whole time, ISR healing verified afterwards, and a fresh
-client rebuilding the finished board by replay alone.
+(implementation plan, Step 8): clean `mvn verify`, fresh cluster, then
+complete games through the real compose cluster — including one played
+start-to-win with a broker stopped the whole time, ISR healing verified
+afterwards, and a fresh client rebuilding the finished board by replay alone.
 
 That last run produced its own lesson (ISSUES.md #8): the first broker-kill
 orchestration waited for `GameStarted`, slept, then killed the broker

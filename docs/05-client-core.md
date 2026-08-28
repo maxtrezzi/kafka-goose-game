@@ -26,10 +26,11 @@ the reasoning is spelled out:
 
 **Why duplicate?**
 
-- PLAN.md fixes the dependency graph: a client needs *no game rules* on its
-  classpath. `GameState` lives in `engine`, and pulling `engine` in for its
-  fold would drag the rule book (Board, GameEngine) into every future UI —
-  clients that must never make rule decisions would have the means to.
+- The implementation plan fixes the dependency graph: a client needs *no game
+  rules* on its classpath. `GameState` lives in `engine`, and pulling `engine`
+  in for its fold would drag the rule book (Board, GameEngine) into every
+  future UI — clients that must never make rule decisions would have the means
+  to.
 - The two folds serve different masters and were already diverging:
   `GameView` additionally maintains `recentEvents` (a bounded display log)
   and will grow UI-facing conveniences that have no place in the engine.

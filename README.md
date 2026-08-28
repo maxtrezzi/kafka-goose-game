@@ -185,7 +185,8 @@ anti-patterns avoided — with the design motivations for each choice.
 
 Project logs:
 
-- [PLAN.md](PLAN.md) — the 8-step implementation plan this was built from
+- [Implementation plan](docs/10-implementation-plan.md) — the 8-step plan this
+  project was built from
 - [DECISIONS.md](DECISIONS.md) — every non-obvious design call, with reasoning
 - [ISSUES.md](ISSUES.md) — every problem hit along the way and its actual fix
 
@@ -194,3 +195,7 @@ Project logs:
 Web UI (Javalin + SSE) on top of `client-core`; Avro + Schema Registry
 migration; multiple server instances (commands are already partitioned by
 gameId — see the single-instance caveat in DECISIONS.md).
+
+## License
+
+[MIT](LICENSE) — © 2026 maxtrezzi.

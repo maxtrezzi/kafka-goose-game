@@ -82,6 +82,7 @@ motivation is examined in [chapter 5](05-client-core.md)).
 | [07 — Infrastructure & build](07-infrastructure-and-build.md) | The KRaft cluster, topic configuration, and the Maven multi-module setup |
 | [08 — Testing](08-testing.md) | The test strategy per layer, the deterministic E2E, and what live smoke-testing caught that unit tests could not |
 | [09 — Patterns & anti-patterns](09-patterns-and-antipatterns.md) | The consolidated catalog: every pattern applied and every anti-pattern designed out, with pointers to where |
+| [10 — Implementation plan](10-implementation-plan.md) | The 8-step build order the project was actually executed in, one self-contained step per session |
 
 Each chapter closes with a **Decisions** and an **Issues** section, the
 in-context version of the two project logs:
@@ -91,11 +92,13 @@ in-context version of the two project logs:
 
 For a hands-on introduction (quickstart, TUI commands, Kafka experiments to
 run against the live cluster), see the top-level [README](../README.md). The
-step-by-step build order the project followed is in [`PLAN.md`](../PLAN.md).
+step-by-step build order the project followed is in
+[chapter 10](10-implementation-plan.md).
 
 ## Fixed constraints the project was built under
 
-These were decided up front (see `PLAN.md`) and never revisited:
+These were decided up front (see [chapter 10](10-implementation-plan.md)) and
+never revisited:
 
 | Constraint | Value | Motivation |
 |---|---|---|

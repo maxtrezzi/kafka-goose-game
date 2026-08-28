@@ -1,0 +1,87 @@
+/* Print stylesheet for the implementation documentation.
+   Used by build-pdf.sh via pandoc --pdf-engine=weasyprint. */
+
+@page {
+  size: A4;
+  margin: 64pt 56.7pt;
+
+  @top-right {
+    content: "kafka-goose-game — Implementation Documentation";
+    font-family: serif;
+    font-size: 8pt;
+    color: #999;
+  }
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-family: serif;
+    font-size: 8.6pt;
+    color: #666;
+  }
+}
+
+html { font-family: serif; font-size: 12.75pt; }
+
+body {
+  max-width: 407pt;
+  margin: 0 auto;
+  line-height: 1.365;
+  hyphens: auto;
+}
+
+a { color: #1a1a1a; text-decoration: none; }
+
+/* Title page */
+#title-block-header { text-align: center; break-after: page; }
+#title-block-header .title    { font-size: 27.9pt; margin: 6.5cm 0 0; }
+#title-block-header .subtitle { font-size: 14.6pt; color: #555; margin: 1.2em 0 0; font-weight: normal; }
+#title-block-header .date     { font-size: 12.4pt; color: #777; margin: 1em 0 0; }
+
+/* Table of contents: one bold line per chapter, plain lines for its sections */
+nav#TOC { break-after: page; }
+nav#TOC ul { list-style: none; padding: 0; margin: 0; }
+nav#TOC > ul > li { font-weight: bold; font-size: 13.1pt; margin-top: 0.6em; }
+nav#TOC > ul > li > ul { font-weight: normal; font-size: 12.85pt; margin-left: 1.2em; }
+
+/* Headings: every chapter opens a page */
+h1 {
+  font-size: 18.63pt;
+  line-height: 1.326;
+  margin: 24.8pt 0 12pt;
+  padding-bottom: 3.5pt;
+  break-before: page;
+  break-after: avoid;
+}
+#title-block-header + nav#TOC + section > h1:first-of-type,
+body > h1:first-of-type { break-before: avoid; }
+h2 { font-size: 13.73pt; margin: 17.5pt 0 13.5pt; break-after: avoid; }
+h3 { font-size: 13.0pt; margin: 17.5pt 0 13pt; break-after: avoid; }
+
+p { margin: 0 0 12pt; orphans: 2; widows: 2; }
+
+blockquote {
+  margin: 12pt 33.9pt;
+  font-style: italic;
+  color: #606060;
+}
+
+/* Code: inline at 10pt, blocks small enough for the 90-column ASCII diagrams */
+code { font-family: monospace; font-size: 10.2pt; }
+pre { break-inside: avoid; margin: 12pt 0; padding-left: 11.6pt;
+      font-size: 6.8pt; line-height: 1.47; }
+pre code { font-size: inherit; }
+
+table {
+  border-collapse: collapse;
+  font-size: 8.7pt;
+  width: 100%;
+  margin: 1em 0;
+  break-inside: avoid;
+}
+th, td { border: 0.5pt solid #bbb; padding: 3pt 5pt; text-align: left; vertical-align: top; }
+th { font-weight: bold; }
+table code { font-size: 7.3pt; }
+
+ul, ol { margin: 0 0 12pt; padding-left: 20.4pt; }
+li { margin-bottom: 2.1pt; }
+
+hr { border: none; border-top: 0.5pt solid #ccc; margin: 1.5em 0; }

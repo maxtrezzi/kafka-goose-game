@@ -1,6 +1,6 @@
 # 09 — Patterns Applied & Anti-Patterns Avoided: the Catalog
 
-[← Testing](08-testing.md) · [Overview](00-overview.md)
+[← Testing](08-testing.md) · [Implementation plan →](10-implementation-plan.md)
 
 The consolidated reference. Each entry names where the pattern lives and
 which chapter explains the reasoning. The through-line: **most entries are

@@ -181,7 +181,10 @@ exercise: add a `SASL_PLAINTEXT` listener with SCRAM-SHA-256, create
 The full top-down implementation documentation lives in
 [`docs/`](docs/00-overview.md): architecture, one chapter per layer,
 infrastructure, testing strategy, and a catalog of the patterns applied and
-anti-patterns avoided — with the design motivations for each choice.
+anti-patterns avoided — with the design motivations for each choice. The same
+chapters are also bundled as a single
+[PDF](docs/kafka-goose-game-implementation.pdf), rebuilt with
+`./docs/build-pdf.sh` (needs pandoc and WeasyPrint).
 
 Project logs:
 

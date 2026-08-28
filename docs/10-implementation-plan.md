@@ -1,4 +1,6 @@
-# Kafka-Goose-Game — Implementation Plan
+# 10 — Implementation Plan: the 8-Step Build Order
+
+[← Patterns catalog](09-patterns-and-antipatterns.md) · [Overview](00-overview.md)
 
 Multiplayer Game of the Goose (Gioco dell'Oca) to learn Kafka and refresh modern Java.
 

@@ -1,15 +1,22 @@
 # 10 — Implementation Plan: the 8-Step Build Order
 
-[← Patterns catalog](09-patterns-and-antipatterns.md) · [Overview](00-overview.md)
+[← Patterns catalog](09-patterns-and-antipatterns.md) · [Glossary →](11-glossary.md)
 
-Multiplayer Game of the Goose (Gioco dell'Oca) to learn Kafka and refresh modern Java.
+A multiplayer Game of the Goose (Gioco dell'Oca), written to learn Kafka and to
+practise modern Java.
 
-**How to use this file (for any session, human or Claude):**
-Steps are designed to be executed one per session if desired. Each step is self-contained,
-ends in a verifiable state, and assumes only that the previous steps are done.
-Find the first unchecked step below, do it, verify it, then **STOP: show the user every
-command run and all code written, and wait for approval**. Only after approval: check the
-step off and commit. Never start the next step without an explicit user go-ahead.
+This chapter is the plan the project was actually built from, kept as it was
+written. It is a working document, so it is written as short checklists rather
+than as prose: each step lists what to create and how to check it. The other
+chapters explain the reasoning; this one records the order of the work.
+
+**How to use this file (in any working session, with a person or with Claude):**
+each step can be done in one session. Every step stands on its own, ends in a
+state you can check, and assumes only that the earlier steps are finished. Find
+the first step that is not ticked, do it, check it, then **stop: show the user
+every command that was run and all the code that was written, and wait for
+approval**. Only after approval, tick the step off and commit. Never start the
+next step without the user saying so.
 
 ## Status
 
@@ -79,9 +86,10 @@ Create the Maven multi-module skeleton and put it under git.
 **Verify:** `docker compose up -d` → 3 healthy brokers; `kafka-topics.sh --describe` inside
 a container shows both topics with 3 replicas each and full ISR. Commit.
 
-## Step 3 — `protocol` module (messages + Ser/Des)
+## Step 3 — `protocol` module (messages and their JSON format)
 
-The shared language of the game.
+The shared language of the game — the [wire
+contract](11-glossary.md#wire-contract).
 
 - `Command` sealed interface + records: `JoinGame(gameId, player)`, `StartGame(gameId, player)`, `RollDice(gameId, player)`
 - `Event` sealed interface + records: `PlayerJoined`, `GameStarted(players, firstPlayer)`, `TurnStarted(player)`, `DiceRolled(player, die1, die2)`, `PlayerMoved(player, from, to, reason)` (reason: NORMAL/GOOSE/BRIDGE/BOUNCE/MAZE/DEATH...), `PlayerStuck(player, squares)` (inn/well/prison), `PlayerFreed(player)`, `GameWon(player)` — all with `gameId` and `Instant timestamp`
@@ -97,7 +105,8 @@ malformed JSON rejected; oversized payload rejected. `mvn -pl protocol test` gre
 
 ## Step 4 — `engine` module (game rules)
 
-Pure logic, zero Kafka imports. The heart of the Java refresh.
+Pure logic, with no Kafka imports at all. This is where most of the Java
+practice happens.
 
 - `Board`: 63 squares; geese 5,9,14,18,23,27,32,36,41,45,50,54,59; bridge 6→12; inn 19
   (miss one turn); well 31 and prison 52 (stuck until another player lands there); maze
@@ -112,9 +121,9 @@ Pure logic, zero Kafka imports. The heart of the Java refresh.
 **Verify:** unit tests for every rule listed above + full simulated game with scripted dice.
 `mvn -pl engine test` green. Commit.
 
-## Step 5 — `server` module + E2E test
+## Step 5 — `server` module and the end-to-end test
 
-The authoritative game host.
+The one process allowed to decide what happens.
 
 - `GooseServer.main`: on startup, replay `game.events` from beginning to rebuild a
   `Map<String, GameState>`; then consumer loop (group `goose-server`) on `game.commands`:
@@ -133,7 +142,8 @@ PlayerJoined event with `kafka-console-consumer`. Commit.
 
 ## Step 6 — `client-core` module
 
-UI-agnostic client library — the seam that lets us add web/desktop UIs later.
+A client library that knows nothing about any user interface — the boundary
+that makes it possible to add a web or desktop UI later.
 
 - `GameClient` (Closeable): producer to send `Command`s; event consumer on a **virtual
   thread** with a unique consumer group, reading `game.events` from earliest (replay)
@@ -148,8 +158,9 @@ UI-agnostic client library — the seam that lets us add web/desktop UIs later.
 ## Step 7 — `client-tui` module (the game becomes playable)
 
 - `Main`: args = bootstrap servers, gameId, player name (with sensible defaults)
-- Renders the 63-square board as an ANSI-colored serpentine grid (text block template),
-  player tokens as colored letters, special squares marked; reprints on each view update
+- Draws the 63-square board as a snaking grid in ANSI colour, built from a text
+  block, with each player shown as a coloured letter and the special squares
+  marked; it prints the whole board again on every update
 - Stdin loop: `join <name>`, `start`, `roll`, `help`, `quit`
 - Runnable via `mvn -pl client-tui exec:java` (add exec plugin) or a small `run-client.sh`
 

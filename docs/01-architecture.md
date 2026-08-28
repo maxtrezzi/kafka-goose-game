@@ -29,23 +29,27 @@ Two topics, one direction each:
 | `game.commands` | clients | the server | **Intents** — requests that may be rejected |
 | `game.events` | the server only | the server (replay) and every client | **Facts** — things that irrevocably happened |
 
-This command/event split is the architecture. Everything below is about
-making each half honest.
+This split between commands and events *is* the architecture. The rest of this
+chapter is about keeping each half strict: commands that can be refused, events
+that can be trusted.
 
 ## Why event sourcing, and why here
 
-Event sourcing is often overkill. It was chosen here because it is the single
-architecture that exercises the most Kafka concepts at once, on a domain small
-enough to hold in your head:
+[Event sourcing](11-glossary.md#event-sourcing) is more than most projects
+need. It was chosen here because no other architecture uses so many Kafka
+concepts at the same time, on a subject that stays simple enough to follow:
 
 - **The log as source of truth** — Kafka's actual data model, not a queue
   metaphor. State is derived, disposable, and rebuildable (`replay`).
-- **Ordering** — a game's correctness depends on event order; Kafka only
-  orders within a partition, which forces you to understand keying.
-- **Delivery semantics** — "did my event get written exactly once?" stops
-  being an abstract FAQ and becomes a bug you can actually cause.
-- **Multiple independent consumers** — server and N clients all read the same
-  `game.events` with different group semantics and different needs.
+- **Ordering** — a game is only correct if its events are handled in order,
+  and Kafka orders messages inside one partition only. That forces you to
+  understand [keys](11-glossary.md#topic-partition-key).
+- **[Delivery guarantees](11-glossary.md#delivery-semantics-at-most-once-at-least-once-exactly-once)**
+  — "was my event written exactly once?" stops being a question in a manual and
+  becomes a bug you can cause yourself.
+- **Several independent readers** — the server and any number of clients read
+  the same `game.events`, in different [consumer
+  groups](11-glossary.md#consumer-group) and for different reasons.
 
 A board game is an ideal domain for it: turns are inherently sequential
 events, state is small, and rules are pure logic — so the *infrastructure*
@@ -54,8 +58,8 @@ concepts stay in focus.
 ## Server-authoritative: the trust model
 
 Only the server writes `game.events`, and only the server rolls dice
-(`SecureRandom`, [chapter 4](04-server.md)). Clients are untrusted by
-construction:
+(`SecureRandom`, [chapter 4](04-server.md)). The design assumes clients cannot
+be trusted, and does not rely on them behaving well:
 
 - A client cannot move a token — there is no command for it. It can only
   *ask* to join, start, or roll.
@@ -66,11 +70,13 @@ construction:
   field validation — [chapter 2](02-protocol.md)) and the engine (phase/turn
   checks).
 
-The one thing the demo cluster does *not* enforce is broker-side write
-authorization — any process could write `game.events` directly. That is a
-conscious scoping decision: the cluster stays PLAINTEXT for learnability, and
-the README documents SASL/SCRAM + ACLs (clients write-only on commands,
-read-only on events) as the follow-up exercise that would close the gap.
+There is one thing the demo cluster does *not* check: the brokers accept a
+write from anyone, so any process could write to `game.events` directly. This
+is a deliberate limit on the scope of the project. The cluster stays on
+PLAINTEXT so that every command-line experiment works without setting up
+credentials first. The README describes the missing piece — SASL/SCRAM with
+access rules, letting clients only write commands and only read events — as an
+exercise to do next.
 
 ## Keying, partitions, and ordering
 
@@ -87,8 +93,8 @@ Consequences, in order of importance:
    — no distributed locking needed. (The current server is deliberately
    single-instance; the caveat is recorded in
    [chapter 4](04-server.md#the-single-instance-assumption).)
-3. **Parallelism headroom.** 3 partitions is enough to demonstrate points 1–2
-   and matches the 3 brokers; nothing more was needed.
+3. **Room to grow.** Three partitions are enough to show points 1 and 2, and
+   they match the three brokers. Nothing more was needed.
 
 The fold (`GameState.apply`, `GameView.apply`) filters or groups by `gameId`,
 so consumers reading the whole topic stay correct even though partitions
@@ -96,7 +102,8 @@ interleave different games.
 
 ## State is a fold — everywhere, identically
 
-Three folds exist in the system, and their equivalence is a design invariant:
+There are three [folds](11-glossary.md#fold) in the system, and the design
+depends on all three producing the same result:
 
 | Fold | Where | Purpose |
 |---|---|---|
@@ -104,39 +111,46 @@ Three folds exist in the system, and their equivalence is a design invariant:
 | `GameState.apply(Event)` | inside `GameEngine.decide` | The engine folds its *own* freshly-decided events before computing the next turn — decision logic and state logic share one source of truth |
 | `GameView.apply(Event)` | client-core | Displayable state for UIs (adds a recent-event log) |
 
-`GameView` deliberately re-implements the fold rather than reusing
-`GameState` — the reasoning (dependency hygiene vs. code duplication, and why
-the wire protocol is the real contract) is examined in
+`GameView` writes the fold again instead of reusing `GameState`, on purpose.
+The reasons — keeping dependencies clean rather than avoiding repetition, and
+why the message format is the real contract — are set out in
 [chapter 5](05-client-core.md#the-deliberately-duplicated-fold).
 
-The fold **trusts the log**. `apply` does not re-validate cross-event
-invariants (e.g. that a `TurnStarted` names a player who joined): those are
-guaranteed by the engine at decision time, and events are only ever produced
-by the server. Validating in both places would mean maintaining the rules
-twice — the exact duplicated-business-logic trap the code style rules warn
-about. What `apply` *does* check is the per-event boundary: each record
-validates its own fields in its compact constructor, and `apply` rejects
-events addressed to a different `gameId`.
+The fold **trusts the log**. `apply` does not check rules that span several
+events — for example, that a `TurnStarted` names a player who actually joined.
+The engine already guaranteed that when it decided the event, and only the
+server ever writes events. Checking it again here would mean keeping the same
+rules in two places, which is exactly the kind of repeated business logic the
+project's code style rules forbid. What `apply` *does* check is each event on
+its own: every record validates its own fields in its [compact
+constructor](11-glossary.md#compact-constructor), and `apply` refuses events
+that belong to a different `gameId`.
 
-## Delivery semantics: at-least-once, eyes open
+## Delivery guarantees: at-least-once, with the limits stated
 
-The server implements **at-least-once** processing, and the limitation is
-documented rather than hidden:
+The server processes commands
+**[at-least-once](11-glossary.md#delivery-semantics-at-most-once-at-least-once-exactly-once)**.
+The weakness that comes with that choice is written down rather than hidden:
 
-- Producer: `acks=all` + `enable.idempotence=true` — an event acknowledged by
-  the broker is on at least 2 of 3 replicas and was not duplicated by retries.
+- Producer: `acks=all` plus
+  [`enable.idempotence=true`](11-glossary.md#idempotent-producer). Once the
+  broker confirms an event, that event is on at least 2 of the 3 copies, and a
+  network retry cannot have written it twice.
 - The command consumer's offsets are committed **only after** every produced
   event is confirmed (`flush()` then `Future.get()` before `commitSync()`).
 
-A crash between "events produced" and "offsets committed" therefore replays
-the commands from the last commit. For most commands the engine's rejection
-logic makes the replay a no-op (a second `JoinGame` for a joined player
-produces nothing), but a redelivered `RollDice` **rolls again** — dice are
-non-deterministic per state. True exactly-once would require Kafka
-transactions (produce + offset-commit atomically); that was deliberately left
-out of scope as the wrong complexity for a learning project, and the trade-off
-is recorded in `DECISIONS.md`. The important part pedagogically: the failure
-window is *understood and chosen*, not stumbled into.
+So if the server crashes after writing events but before committing offsets,
+it reads those commands again on restart. For most commands this changes
+nothing: the engine simply rejects them a second time, and a repeated
+`JoinGame` for a player who already joined produces no events. A repeated
+`RollDice` is different — it **rolls again**, because the dice are random and
+the same state can give a different result.
+
+Real exactly-once processing would need Kafka transactions, so that producing
+events and committing offsets happen as one atomic step. That was left out on
+purpose: it is the wrong kind of complexity for a learning project, and the
+trade-off is recorded in `DECISIONS.md`. The point worth learning is that this
+gap is *known and accepted*, not discovered by accident.
 
 Clients need no delivery guarantees at all: they never commit offsets, they
 replay from the beginning on every start, and folding is idempotent from a
@@ -149,54 +163,70 @@ Kafka's consumer-offset design space:
 
 | Consumer | Group | Offsets | Why |
 |---|---|---|---|
-| Server replay (startup) | none — manual `assign` + `seekToBeginning` | never committed | Replay must *always* read everything; group semantics (rebalancing, committed positions) would actively fight that |
+| Server replay (startup) | none — manual `assign` + `seekToBeginning` | never committed | Replay must *always* read everything, and a consumer group works against that: it would remember a position and reassign partitions |
 | Server command loop | durable group `goose-server` | committed manually after produce-confirm | The one consumer whose position *is* meaningful state |
-| Every client | throwaway group `goose-client-<uuid>`, `auto.offset.reset=earliest` | never committed | Each client start is a full replay; the group exists only because the consumer API requires one for `subscribe()` |
+| Every client | a new group per run, `goose-client-<uuid>`, with `auto.offset.reset=earliest` | never committed | Every client start reads the whole history; the group exists only because `subscribe()` requires one |
 
 ## Failure containment
 
-- **Poison pills** (records that fail deserialization) are logged and skipped
-  by seeking past the offending offset — both server and clients. A consumer
-  loop must never die because of one bad record it will re-read forever.
-- **Broker loss**: RF=3 with `min.insync.replicas=2` means any single broker
-  can die without data loss or downtime — verified live by playing a complete
-  game with one broker stopped ([chapter 8](08-testing.md)). Losing a second
-  broker makes `acks=all` writes fail — loudly, which is the durability
-  contract working as intended.
+- **[Poison pills](11-glossary.md#poison-pill)** — records that cannot be
+  deserialized — are logged and skipped, by moving the consumer past that
+  offset. Both the server and the clients do this. A consumer loop must never
+  die because of one bad record, because on restart it would read the same
+  record and die again.
+- **Broker loss** — with three copies of each partition and
+  [`min.insync.replicas=2`](11-glossary.md#replication-factor-isr-and-minimum-in-sync-replicas),
+  any one broker can stop without losing data and without stopping the game.
+  This was checked by playing a full game with one broker down
+  ([chapter 8](08-testing.md)). If a second broker is lost, `acks=all` writes
+  start failing, and they fail visibly: that is the durability promise doing
+  its job, not a defect.
 - **Listener/UI failures** on the client are caught and logged so a rendering
   bug cannot stop the event stream ([chapter 5](05-client-core.md)).
 
 ## Patterns applied at this level
 
 - **Event Sourcing** — state as a fold over an append-only log.
-- **CQRS in miniature** — commands (write intents) and events (read facts) on
-  separate channels with separate types; no shared "message" superclass.
+- **[CQRS](11-glossary.md#cqrs-and-the-read-model) on a small scale** —
+  commands (requests to change something) and events (records of what happened)
+  travel on separate topics with separate types. There is no shared "message"
+  parent class.
 - **Single Writer** — one authority per game's history (the server; per
   partition via keying).
-- **Functional core, imperative shell** — pure `decide`/`apply` in the engine,
-  all I/O pushed to the server and client edges (chapters 3–5).
+- **[Functional core, imperative
+  shell](11-glossary.md#functional-core-imperative-shell)** — `decide` and
+  `apply` in the engine are pure functions; all input and output happens in the
+  server and the clients (chapters 3–5).
 
 ## Anti-patterns avoided at this level
 
-- **Dual writes** — the server never writes state *and* events as separate
-  operations that could diverge; the local state map is always derived from
-  exactly the events that were produced.
+- **Dual writes** — writing the same change to two places, which can then
+  disagree. The server never stores state *and* events as two separate
+  operations: its local map is always built from exactly the events it
+  produced.
 - **Database-as-message-bus / shared mutable state** — processes communicate
   only through the two topics; no process reads another's memory.
 - **Trusting the client** — no client-computed moves, no client-side dice.
-- **Hidden delivery semantics** — the at-least-once window is documented at
-  the exact code site that creates it, instead of pretending to exactly-once.
+- **Hidden delivery guarantees** — the at-least-once gap is documented in the
+  code that creates it, instead of claiming exactly-once.
 
 ## Decisions in this chapter
 
-From [`DECISIONS.md`](../DECISIONS.md): rejected commands produce no events;
-at-least-once over exactly-once; replay via manual assign; state is throwaway;
-single-instance assumption; topic names as shared constants in `protocol`.
+From [`DECISIONS.md`](../DECISIONS.md):
+
+- A rejected command produces no events at all.
+- At-least-once was chosen over exactly-once.
+- Replay assigns partitions manually instead of joining a consumer group.
+- In-memory state can always be thrown away and rebuilt.
+- The server assumes it is the only instance running.
+- Topic names live in `protocol` as shared constants.
 
 ## Issues hit at this level
 
-From [`ISSUES.md`](../ISSUES.md): #7 — the well+prison mutual-trap deadlock,
-which looked like an engine bug but was really an *architectural* lesson: with
-an append-only log you cannot "fix the data", only fix the rules going
-forward, and old logs must still fold correctly (see
-[chapter 3](03-engine.md#the-deadlock-amendment)).
+From [`ISSUES.md`](../ISSUES.md), issue #7: two players could trap each other
+in the well and the prison, and the game could never continue. It looked like a
+bug in the engine, but the real lesson was about architecture. With a log you
+can only add to, you cannot go back and "correct the data"; you can only change
+the rules from now on, and the events already written must still fold correctly
+under the new rules (see
+[chapter 3](03-engine.md#the-change-to-the-deadlock-rule)).

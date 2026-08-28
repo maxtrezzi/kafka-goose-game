@@ -2,11 +2,12 @@
 
 [← Server](04-server.md) · [client-tui →](06-client-tui.md)
 
-`client-core` is the seam that keeps UIs cheap: everything a client needs to
-participate in a game — sending commands, following events, folding them into
-displayable state — with **no console I/O and no UI assumptions**. A web or
-desktop UI would depend on this module exactly as the TUI does, implementing
-one interface.
+`client-core` is the layer that makes a new user interface cheap to write. It
+holds everything a client needs in order to take part in a game — sending
+commands, following events, folding them into state that can be displayed —
+with **no console input or output and no assumptions about the UI**. A web or
+desktop interface would depend on this module in exactly the same way the
+terminal UI does, by implementing one interface.
 
 Three types:
 
@@ -20,72 +21,78 @@ Dependency: **`protocol` only.** Not `engine` — deliberately.
 
 ## The deliberately duplicated fold
 
-`GameView.apply(Event)` re-implements the event fold instead of reusing the
-engine's `GameState`. This is the most debatable decision in the codebase, so
-the reasoning is spelled out:
+`GameView.apply(Event)` writes the event [fold](11-glossary.md#fold) again
+instead of reusing the engine's `GameState`. This is the decision in the
+codebase that is easiest to argue with, so the reasoning is set out in full.
 
-**Why duplicate?**
+**Why write it twice?**
 
-- The implementation plan fixes the dependency graph: a client needs *no game
-  rules* on its classpath. `GameState` lives in `engine`, and pulling `engine`
-  in for its fold would drag the rule book (Board, GameEngine) into every
-  future UI — clients that must never make rule decisions would have the means
-  to.
-- The two folds serve different masters and were already diverging:
-  `GameView` additionally maintains `recentEvents` (a bounded display log)
-  and will grow UI-facing conveniences that have no place in the engine.
-- **The wire protocol — not a shared class — is the contract.** Server and
-  client agree because they consume the same sealed `Event` hierarchy, and
-  both folds are exhaustive switches over it: a new event type breaks *both*
-  compilations until both folds handle it. The shared protocol tests are the
-  guard.
+- The implementation plan fixes which module may depend on which: a client must
+  have *no game rules* available to it. `GameState` lives in `engine`, and
+  depending on `engine` just to reuse the fold would bring `Board` and
+  `GameEngine` along with it. Every future UI would then be able to decide
+  game rules, which is exactly what clients must never do.
+- The two folds are there for different reasons and had already started to
+  differ. `GameView` also keeps `recentEvents`, a short list for display, and
+  will grow more conveniences meant for the screen, which have no place in the
+  engine.
+- **The message format, not a shared class, is the contract.** Server and
+  client agree because they use the same sealed `Event` types, and both folds
+  are switches that must cover every case. A new event type breaks *both*
+  builds until both folds handle it, and the shared protocol tests check the
+  rest.
 
-**What it costs:** the fold semantics exist twice (~100 lines), and a
-behavioral divergence between them would show as a client rendering a
-different board than the server believes. Accepted with eyes open and
-recorded in DECISIONS.md — this is the *coincidental-vs-shared* duplication
-judgment call: the two folds are intentionally allowed to evolve apart,
-which is exactly when extraction is the wrong move.
+**What it costs:** the same fold logic exists twice, about 100 lines, and if
+the two ever behaved differently, a client would draw a board the server does
+not agree with. The cost was accepted knowingly and recorded in DECISIONS.md.
+This is the judgement call about [coincidental
+duplication](11-glossary.md#coincidental-duplication): the two folds are
+*meant* to grow apart, and that is exactly when merging them into one shared
+piece of code is the wrong move.
 
-`GameView` itself follows the same value discipline as `GameState`: a record,
-deep-immutable via `List.copyOf`/`Map.copyOf` in the compact constructor,
-`Optional` for absence, exhaustive switch, private withers.
-`recentEvents` is capped at 10 (`RECENT_EVENTS_LIMIT`), oldest evicted first
-— a display log, not a history (the history is the topic).
+`GameView` is built with the same discipline as `GameState`: a record, unable
+to be changed at any depth thanks to `List.copyOf` and `Map.copyOf` in the
+compact constructor, `Optional` instead of null, a switch that covers every
+case, and small private helpers to build the next value. `recentEvents` holds
+at most 10 entries (`RECENT_EVENTS_LIMIT`) and drops the oldest first. It is a
+list for the screen, not a history: the history is the topic.
 
 ## Replay-on-start: the client keeps nothing
 
 Every `GameClient` start creates a consumer with a **fresh group id**
 (`goose-client-<uuid>`), `auto.offset.reset=earliest`, auto-commit off,
-offsets never committed. So a client (re)started mid-game rebuilds its whole
-view by replaying `game.events` from the beginning — the "kill a client and
-watch the board reappear" demo is not a feature bolted on, it *is* the read
-model. The throwaway group exists only because `subscribe()` requires one;
-nothing is ever stored under it.
+and offsets that are never committed. So a client started, or restarted, in
+the middle of a game rebuilds its whole view by reading `game.events` from the
+beginning. Killing a client and watching the board come back is not a feature
+added on top: it is simply what a [read
+model](11-glossary.md#cqrs-and-the-read-model) does. The group id exists only
+because `subscribe()` demands one, and nothing is ever stored under it.
 
-Events are filtered client-side by `gameId` (the topic is shared by all
-games) and tombstones are skipped.
+Events are filtered by `gameId` in the client, because all games share the
+topic, and [tombstones](11-glossary.md#tombstone) are skipped.
 
 ## Threading model
 
-- **The event loop owns the consumer and the fold.** It runs on a **virtual
-  thread** (`Thread.ofVirtual()`) — the poll loop is I/O-bound waiting, the
-  canonical virtual-thread workload; a platform thread per client would be
-  waste. The `view` field is `volatile` so any thread can read the latest
-  snapshot via `view()` (safe because `GameView` is immutable — publication
-  is the only concern).
-- **Listener callbacks run on the event-loop thread, in log order.** The
-  contract is documented on `GameListener`: a UI that needs its own thread
-  hands off itself. A listener exception is caught, logged and skipped — a UI
-  rendering bug must not stop the event stream (`notifyListener`).
-- **Command senders and `close()` may be any thread.** `KafkaProducer` is
-  thread-safe by contract (the one Kafka client that is); shutdown follows
-  the same signal-don't-touch protocol as the server: `volatile running`
-  flag, `consumer.wakeup()` via `AtomicReference`, then `eventLoop.join(
-  CLOSE_TIMEOUT)` — Java 21's `join(Duration)` — logging a warning if the
-  loop fails to stop in 10 s. The producer is closed by `close()` because
-  `close()`'s thread owns it (it was created in the constructor, used via
-  thread-safe API).
+- **The event loop owns the consumer and the fold.** It runs on a [virtual
+  thread](11-glossary.md#virtual-thread) (`Thread.ofVirtual()`). The poll loop
+  spends nearly all its time waiting for the network, which is exactly what
+  virtual threads are for; giving each client a full operating-system thread
+  would waste one. The `view` field is `volatile` so that any thread can read
+  the latest value through `view()`. That is safe because `GameView` cannot
+  change: the only thing that has to work is making the new value visible.
+- **Listener methods run on the event-loop thread, in log order.** The rule is
+  written on `GameListener`: a UI that needs its own thread must move the work
+  there itself. An exception thrown by a listener is caught, logged and passed
+  over, because a drawing bug in a UI must not stop the flow of events
+  (`notifyListener`).
+- **Commands may be sent from any thread, and so may `close()`.**
+  `KafkaProducer` is safe to use from several threads — the one Kafka client
+  that is. Shutdown works like the server's: signal, do not touch. A `volatile
+  running` flag, then `consumer.wakeup()` through an `AtomicReference`, then
+  `eventLoop.join(CLOSE_TIMEOUT)` using Java 21's `join(Duration)`, with a
+  warning in the log if the loop has not stopped after 10 seconds. The producer
+  is closed by `close()` because that thread owns it: it was created in the
+  constructor and only ever used through a thread-safe API.
 
 ### The `connect()` static factory
 
@@ -100,59 +107,67 @@ public static GameClient connect(String bootstrap, String gameId, GameListener l
 }
 ```
 
-Motivation: starting a thread inside a constructor publishes `this` before
-construction completes (the classic *this-escape* — the thread could observe
-final fields half-initialized). The factory starts the thread only after the
-constructor has returned. This was a skill-review finding, fixed by
-restructuring rather than by suppression.
+The reason: starting a thread inside a constructor hands out `this` before the
+object is fully built. This is the well-known *this-escape* problem — the new
+thread can see final fields that are not set yet. The factory method starts the
+thread only after the constructor has finished. This came out of a code review
+and was fixed by changing the structure, not by silencing the warning.
 
 ## Sending commands
 
-`send()` attaches a **completion callback** that logs any failure — the
-producer future must never be silently dropped, because for a fire-and-forget
-client that log line is the *only* signal a command was lost (review finding:
-the original code discarded the future). After each send the producer is
-`flush()`ed: at human-scale traffic, prompt delivery beats batching, and a
-player's `roll` should be on the wire before their finger leaves the key.
+`send()` adds a **callback** that logs any failure. The result of a send must
+never be thrown away in silence, because a client that does not wait for an
+answer has nothing else to tell it that a command was lost — that log line is
+the only signal. (A review found that the original code dropped the result.)
+After each send the producer is flushed with `flush()`. At the speed a person
+plays, sending immediately is better than collecting messages into batches: a
+player's `roll` should be on its way before they lift their finger off the key.
 
-Client-side validation comes for free: `client.join("bad name!")` throws
+Checking the input costs nothing extra: `client.join("bad name!")` throws
 `IllegalArgumentException` from the `Command.JoinGame` compact constructor
-*before* anything touches Kafka — the protocol's parse-don't-validate
-design doing local duty.
+*before* Kafka is involved at all. That is the protocol's [parse, don't
+validate](11-glossary.md#parse-dont-validate) design working locally as well.
 
-Poison pills on the event stream are seek-past-skipped exactly as in the
-server.
+Events that cannot be read are skipped by stepping past them, exactly as in
+the server.
 
 ## Patterns applied
 
-- **Ports and adapters** — `GameListener` is the port; the TUI (or any future
-  UI) is an adapter; `client-core` knows none of them.
-- **Read model / projection** (the query half of CQRS) — `GameView` projects
-  the event stream into display shape.
-- **Static factory over constructor** to prevent this-escape and give the
-  operation a name (`connect`).
-- **Virtual thread per long-lived I/O loop** — Java 21's intended use.
-- **Immutable snapshot publication** — `volatile` reference to an immutable
-  value; readers get consistency without locks.
+- **[Ports and adapters](11-glossary.md#ports-and-adapters-hexagonal-architecture)**
+  — `GameListener` is the port, the terminal UI (or any future UI) is an
+  adapter, and `client-core` knows about none of them.
+- **[Read model](11-glossary.md#cqrs-and-the-read-model)** — `GameView` turns
+  the stream of events into a shape meant for display.
+- **A static factory method instead of a public constructor**, to avoid the
+  this-escape problem and to give the operation a name: `connect`.
+- **One virtual thread per long-running I/O loop** — what Java 21 intends
+  virtual threads for.
+- **Publishing an unchangeable value** — a `volatile` reference to an immutable
+  object, so readers get a consistent view without any locking.
 
 ## Anti-patterns avoided
 
-- **this-escape from a constructor** (thread started before construction
-  completed) — restructured via the factory.
-- **Dropped async results** — the producer callback.
-- **UI exceptions killing the data pipeline** — listener isolation.
-- **Client-side offset state** — nothing to migrate, nothing to corrupt;
-  restart = replay.
-- **Sharing a consumer across threads** — confinement + `wakeup()`, same as
-  the server.
+- **Letting `this` escape from a constructor**, by starting a thread before the
+  object was finished — solved with the factory method.
+- **Throwing away the result of an asynchronous call** — solved with the
+  producer callback.
+- **A UI exception stopping the flow of data** — the listener is isolated.
+- **Keeping offsets on the client** — there is nothing to move and nothing to
+  corrupt: a restart simply reads everything again.
+- **Using one consumer from several threads** — it stays in one thread and is
+  stopped with `wakeup()`, as in the server.
 
 ## Decisions (from DECISIONS.md)
 
-GameView fold duplication rationale; fresh-group replay-on-start; listener
-threading contract; `connect()` factory; per-command flush; recentEvents cap.
+- `GameView` repeats the fold on purpose, for the reasons given above.
+- Every client run uses a new group and reads the whole log from the start.
+- Listener methods run on the event-loop thread, and this is documented.
+- `connect()` is a factory method, so the constructor starts no thread.
+- The producer is flushed after every command.
+- `recentEvents` never holds more than ten events.
 
 ## Issues (from ISSUES.md)
 
-**#6** — first compile failed: `kafka-clients` uses slf4j internally but does
-not expose it at compile scope; `slf4j-simple` declared explicitly (version
-managed by the parent POM).
+**#6** — the first build failed. `kafka-clients` uses slf4j internally but
+does not make it available at compile time, so `slf4j-simple` is now declared
+explicitly, with its version managed by the parent POM.

@@ -135,6 +135,20 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   `kafka-2` stopped the whole time, then the broker rejoins and the ISR heals.
   Stopping a broker "mid-game" raced the ~90-second blind-roll games and could
   silently test a finished game (ISSUES.md #8).
+- **The chapters are written for B2-level technical English** (readers who do
+  not have English as a first language), and the terms that stay are collected
+  in `docs/11-glossary.md` instead of being replaced. Metaphors that carried
+  meaning ("the imperative rim", "the seam", "eyes open") were replaced with
+  plain wording, and the end-of-chapter recaps became bullet lists with verbs.
+  Real terms of art — event sourcing, at-least-once, seam, poison pill,
+  tombstone, parse-don't-validate — were kept, because they are the words the
+  Kafka and Java communities use, and each one now has a short explanation and
+  a link to a source.
+- **The PDF build rewrites links rather than leaving them relative**: a link to
+  another chapter becomes an anchor inside the merged document, and a link out
+  of `docs/` becomes a repository URL. Left alone, WeasyPrint resolved them
+  against the build machine and wrote `file:///home/...` paths into a file
+  meant to be published.
 - **The PDF build is committed as `docs/build-pdf.sh` + `docs/pdf.css`**, not
   kept as a shell one-liner: the first PDF was produced by an invocation nobody
   wrote down, so the layout had to be reverse-engineered from the PDF itself

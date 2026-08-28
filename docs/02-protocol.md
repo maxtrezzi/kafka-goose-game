@@ -2,11 +2,13 @@
 
 [← Architecture](01-architecture.md) · [Engine →](03-engine.md)
 
-The `protocol` module is the shared language of the system: the only code
-that both the server side (`engine`, `server`) and the client side
-(`client-core`, `client-tui`) depend on. It contains the message hierarchies,
-their validation, the JSON Serde, and the topic names — and nothing else. It
-has no game rules and no I/O beyond serialization.
+The `protocol` module is the shared language of the system, and the
+[wire contract](11-glossary.md#wire-contract) between the two sides: it is the
+only code that both the server side (`engine`, `server`) and the client side
+(`client-core`, `client-tui`) depend on. It contains the message types, their
+validation, the JSON [Serde](11-glossary.md#serde) and the topic names, and
+nothing else. It holds no game rules, and does no input or output beyond
+turning messages into bytes and back.
 
 ## The message hierarchies
 
@@ -31,172 +33,200 @@ Two sealed interfaces, one per topic:
 | `PlayerMoved` | player, from, to, `MoveReason` | One movement segment; a single roll can emit several (goose chains, bounce) |
 | `PlayerStuck` | player, square | Trapped on inn 19 / well 31 / prison 52 |
 | `PlayerFreed` | player | No longer trapped |
-| `GameWon` | player | Landed exactly on 63; terminal |
+| `GameWon` | player | Landed exactly on 63; the game ends here |
 
 Every event also carries `gameId` and an `Instant timestamp`. `MoveReason`
 (`NORMAL`, `GOOSE`, `BRIDGE`, `BOUNCE`, `MAZE`, `DEATH`) makes each movement
 segment self-describing, so clients can render *why* a token moved without
 knowing any board rules.
 
-### Why records + sealed interfaces
+### Why records and sealed interfaces
 
-- **Records** give value semantics (`equals`/`hashCode`/`toString`) correct by
-  construction and immutability by default — exactly what a wire message is.
-  The E2E test compares whole events with `assertEquals`; that works only
-  because records define equality by content.
-- **Sealed** hierarchies make the message set *closed and compiler-checked*.
-  Every `switch` over `Command` or `Event` in the codebase is exhaustive with
-  **no `default` branch** — adding a ninth event type refuses to compile until
-  the engine fold, the client fold, and the TUI renderer all handle it. The
-  compiler becomes the checklist for protocol evolution.
+- **[Records](11-glossary.md#record)** compare by content, not by identity, and
+  cannot be changed after they are built. That is exactly what a message on the
+  network is. The end-to-end test compares whole events with `assertEquals`,
+  which only works because two records with the same values are equal.
+- **[Sealed](11-glossary.md#sealed-interface)** interfaces fix the list of
+  message types, and the compiler knows that list. Every `switch` over
+  `Command` or `Event` in this codebase covers all cases and has **no
+  `default` branch** (see [exhaustive pattern
+  matching](11-glossary.md#exhaustive-pattern-matching)). Adding a ninth event
+  type breaks the build until the engine fold, the client fold and the terminal
+  renderer all handle it. The compiler, not a checklist, tells you what still
+  has to change.
 
-### Granularity choice: many small facts over one big one
+### How much each event should say: many small facts, not one big one
 
-A single roll could have been one fat `TurnResolved` event carrying the dice,
-all movement, traps and the next player. Instead it is a *sequence* of small
-events (`DiceRolled`, `PlayerMoved`×n, `PlayerStuck`?, `PlayerFreed`?,
-`TurnStarted`/`GameWon`). Motivations:
+One roll could have produced a single large `TurnResolved` event, carrying the
+dice, all the movement, any traps and the next player. Instead it produces a
+*sequence* of small events: `DiceRolled`, one `PlayerMoved` per movement step,
+then `PlayerStuck` or `PlayerFreed` if they apply, then `TurnStarted` or
+`GameWon`. The reasons:
 
-- each event has one meaning and one consumer-side fold case — folds stay
-  trivial;
-- the log is readable move-by-move in a console consumer (a learning feature);
-- animation-grade granularity is available to future UIs for free.
+- each event means one thing and needs one case in the fold, so the folds stay
+  simple;
+- the log can be read move by move in a console consumer, which is useful while
+  learning;
+- a future UI can animate each step, because each step is already a separate
+  event.
 
-The cost — a turn is not atomic in the log — is harmless: partial sequences
-can only occur if the server dies mid-produce, and at-least-once redelivery
-regenerates the remainder of the turn (see [chapter 4](04-server.md)).
+The price is that a turn is not written as one indivisible unit. That turns out
+not to matter: an incomplete sequence can only happen if the server dies while
+writing it, and when the command is delivered again the rest of the turn is
+produced (see [chapter 4](04-server.md)).
 
 ## Validation at the boundary — and only there
 
-Every field is validated in the record's **compact constructor**, with the
-shared checks centralized in package-private `Validation`:
+Every field is checked in the record's **[compact
+constructor](11-glossary.md#compact-constructor)**, with the checks that repeat
+collected in the package-private `Validation` class:
 
 - `gameId`: 1–64 chars of `[A-Za-z0-9_-]`
 - `player`: 1–20 chars of `[A-Za-z0-9_-]`
 - `players` list: non-empty, each name valid, **no duplicates**, defensively
   copied with `List.copyOf`
 - dice 1–6, squares 0–63 (0 = off-board start), timestamps non-null
-- `GameStarted` additionally checks `firstPlayer ∈ players` — an invariant
-  *between* fields belongs to the record that holds both
+- `GameStarted` also checks that `firstPlayer` is one of `players`. A rule
+  that links two fields belongs in the record that holds them both
 
-The consequence is a strong system-wide guarantee: **an invalid message
-cannot exist as a Java object**. There is no code path — local construction,
-deserialization from the wire, test fixture — that can produce a `Command` or
-`Event` with a null field, an oversized name, or a die of 7, because Jackson
-itself goes through the canonical constructor of each record. Everything
-downstream (engine, server, clients) can consume messages without a single
-defensive null check, and does.
+This gives one strong guarantee for the whole system: **an invalid message
+cannot exist as a Java object**. There is no way to build one — not in normal
+code, not when reading from Kafka, not in a test — because Jackson also goes
+through each record's main constructor. A `Command` or `Event` with a null
+field, a name that is too long, or a die showing 7, simply cannot be created.
+Everything further along — engine, server, clients — can therefore use messages
+without a single defensive null check, and does.
 
-The tight `[A-Za-z0-9_-]` charset is a security decision, not a style one: 
-names end up in log lines, ANSI terminal output, and shell-adjacent contexts
-(console consumers). Restricting the alphabet at the boundary kills injection
-concerns (log forging, ANSI escape smuggling, path/shell metacharacters) in
-one place instead of escaping in many.
+Allowing only the characters `[A-Za-z0-9_-]` in names is a security decision,
+not a matter of taste. Names appear in log files, in terminal output, and in
+the output of command-line tools. Limiting the characters at the boundary
+removes a whole family of injection attacks at once: fake log lines, hidden
+ANSI escape sequences that rewrite what the terminal shows, and characters with
+a special meaning to a shell or a file path. The alternative is escaping the
+same values correctly in every place they are printed.
 
 ## The Serde: one class, three interfaces
 
 `JsonSerde<T>` implements Kafka's `Serializer<T>`, `Deserializer<T>` **and**
-`Serde<T>` in a single stateless class (`serializer()`/`deserializer()` return
-`this`). One instance therefore serves plain producers/consumers today and
-Kafka Streams / `TopologyTestDriver` tomorrow. It is constructed per
-hierarchy: `new JsonSerde<>(Event.class)` or `new JsonSerde<>(Command.class)`.
+`Serde<T>` in one class that holds no state (`serializer()` and
+`deserializer()` both return `this`). A single instance therefore works with
+ordinary producers and consumers today, and would work with Kafka Streams
+later without changes. One instance is built per message family:
+`new JsonSerde<>(Event.class)` or `new JsonSerde<>(Command.class)`.
 
 Design points, each with its motivation:
 
-### Closed polymorphism — the security core
+### A closed set of types — the heart of the security design
 
-The JSON `"type"` discriminator comes from `@JsonTypeInfo(use = NAME)` +
-explicit `@JsonSubTypes` on the sealed interfaces. Jackson's **polymorphic
-default typing is never activated**. This is the difference between "the wire
-can name any class on the classpath" (the classic Jackson gadget-chain RCE
-vector) and "the wire can name exactly these 11 record types and nothing
-else". The closed set also mirrors the sealed hierarchy: the compiler enforces
-it in Java, the annotation enforces it on the wire.
+The `"type"` field in the JSON comes from `@JsonTypeInfo(use = NAME)` together
+with an explicit `@JsonSubTypes` list on each sealed interface. Jackson's
+**default typing is never switched on**. The difference matters: with default
+typing, an incoming message can name *any* class available to the program,
+which is the well-known Jackson attack that ends in remote code execution. With
+an explicit list, a message can name exactly these 11 record types and nothing
+else. The list also matches the sealed interface: the compiler enforces it
+inside Java, the annotation enforces it on the network.
 
 ### Payload cap before parsing
 
-`MAX_PAYLOAD_BYTES = 10 KiB`, checked on the raw byte array *before* Jackson
-touches it. Real messages are a few hundred bytes; anything bigger is garbage
-or abuse, and rejecting it early bounds the memory a hostile producer can make
-the server parse.
+`MAX_PAYLOAD_BYTES = 10 KiB`, checked on the raw bytes *before* Jackson sees
+them. Real messages are a few hundred bytes, so anything larger is either
+broken or hostile. Refusing it early puts a fixed limit on how much memory an
+attacker can make the server use for parsing.
 
 ### Unknown fields are tolerated — explicitly
 
-`FAIL_ON_UNKNOWN_PROPERTIES = false`, with a why-comment and a pinning test.
-This was a review finding (ISSUES.md #5): Jackson's default (`true`) was in
-force *by accident* — chosen by nobody, tested by nothing. In an event-sourced
-system the log lives indefinitely, so a newer producer must be able to add
-fields without poisoning every not-yet-upgraded consumer. The leniency is safe
-precisely because of the compact-constructor validation: an unknown *extra*
-field is ignored, but a missing *required* field still fails construction.
-Trade-off accepted: a misspelled field name is silently ignored.
+`FAIL_ON_UNKNOWN_PROPERTIES = false`, with a comment saying why and a test
+that fails if anyone changes it. This came out of a review (ISSUES.md #5):
+Jackson's default of `true` was in force *by accident*, chosen by nobody and
+covered by no test. In an event-sourced system the log is kept forever, so a
+newer producer has to be able to add a field without breaking every consumer
+that has not been updated yet. Accepting unknown fields is safe here only
+because of the checks in the compact constructors: an extra field that nobody
+knows about is ignored, but a required field that is missing still fails.
+The accepted downside is that a misspelled field name is ignored in silence.
 
-### Tombstone contract: null in, null out
+### Tombstones: null in, null out
 
-Both `serialize(null)` and `deserialize(null)` return `null` — a deliberate,
-commented deviation from the project's "never return null" default, because
-Kafka's log-compaction tombstones *are* null payloads and a Serde must pass
-them through. Downstream code handles the null explicitly (the server treats
-a null command/event as "nothing to do").
+Both `serialize(null)` and `deserialize(null)` return `null`. This breaks the
+project's own "never return null" rule on purpose, and the code says so in a
+comment: a Kafka [tombstone](11-glossary.md#tombstone) *is* a message with a
+null value, and a Serde has to let it through unchanged. The code that receives
+it handles the null openly — the server treats a null command or event as
+"nothing to do".
 
 ### Inline `Instant` handling
 
-Timestamps serialize as ISO-8601 strings via a tiny inline `SimpleModule`
-(two anonymous classes) instead of pulling in the `jackson-datatype-jsr310`
-module — two small classes versus a whole dependency for one type. The
-deserializer guards the non-string-token case (`p.getValueAsString()` returns
-null for e.g. `"timestamp": {}`) and raises a proper
-`ctx.wrongTokenException(...)` instead of a bare NPE — a review finding.
+Timestamps are written as ISO-8601 strings by a very small `SimpleModule`
+defined inline (two anonymous classes), instead of adding the
+`jackson-datatype-jsr310` dependency: two short classes against a whole library
+for one type. The reader also handles the case where the value is not a string
+at all. For input such as `"timestamp": {}`, `p.getValueAsString()` returns
+null, so the code raises a proper `ctx.wrongTokenException(...)` rather than
+letting a `NullPointerException` escape — another finding from review.
 
-### Poison-pill contract
+### What happens to a message that cannot be read
 
-Any failure to deserialize — malformed JSON, unknown `"type"`, validation
-failure inside a compact constructor, oversized payload — is wrapped in the
-protocol's own `DeserializationException` with the cause attached. The message
-uses `e.toString()` rather than `e.getMessage()` because the latter can be
-null, and the exception class name is exactly what identifies a poison pill in
-the logs (another review finding). Consumers catch Kafka's
-`RecordDeserializationException` wrapper and **seek past** the bad record —
-log-and-skip, never crash ([chapter 4](04-server.md#poison-pills)).
+Every failure to deserialize — broken JSON, an unknown `"type"`, a check that
+fails inside a compact constructor, a payload that is too large — is wrapped in
+the protocol's own `DeserializationException`, keeping the original exception
+as the cause. The message text uses `e.toString()` and not `e.getMessage()`,
+because `getMessage()` can be null and because the class name of the exception
+is what identifies a [poison pill](11-glossary.md#poison-pill) in the logs
+(again, a review finding). Consumers catch Kafka's
+`RecordDeserializationException` and **move past** the bad record: log it, skip
+it, never stop ([chapter 4](04-server.md#messages-that-cannot-be-read)).
 
 ## Topic names live here too
 
-`Topics.COMMANDS` / `Topics.EVENTS` are constants in the protocol module
-because topic names *are* wire contract — server and clients must agree on
-them exactly like they agree on field names. Before this, each side had its
-own string literal (found in review). Known caveat, recorded in DECISIONS.md:
-`docker-compose.yml`'s `init-topics` service still spells the names in YAML,
-so renaming a topic touches `Topics.java` *and* the compose file.
+`Topics.COMMANDS` and `Topics.EVENTS` are constants in the protocol module,
+because topic names are part of the wire contract: the server and the clients
+must agree on them just as they agree on field names. Before this, each side
+had its own copy of the string, which a review found. One known weak point is
+recorded in DECISIONS.md: the `init-topics` service in `docker-compose.yml`
+still writes the names out in YAML, so renaming a topic means changing
+`Topics.java` *and* the compose file.
 
 ## Patterns applied
 
-- **Algebraic data types** (sealed interface + records) as the message model.
-- **Parse, don't validate** — deserialization *is* validation; downstream code
-  receives only proven-valid values.
-- **Fail fast at the boundary** with named-parameter error messages.
-- **Explicit policy over silent default** — the unknown-fields behavior is
-  set in code, explained in a comment, and pinned by a test, so the policy is
-  a visible choice instead of an inherited accident.
+- **Algebraic data types** — a sealed interface plus records as the message
+  model: a closed list of shapes, each holding its own fields.
+- **[Parse, don't validate](11-glossary.md#parse-dont-validate)** — reading a
+  message *is* validating it, so the rest of the program only ever sees values
+  that are already known to be correct.
+- **Fail immediately at the boundary**, with error messages that name the field
+  at fault.
+- **State the policy instead of inheriting a default** — the handling of
+  unknown fields is set in code, explained in a comment and held in place by a
+  test, so it is a visible choice rather than an accident.
 
 ## Anti-patterns avoided
 
-- **Jackson default typing** — the gadget-chain deserialization vector is
-  designed out, not mitigated.
-- **Stringly-typed messages** — no maps of strings, no "type" switches on raw
-  JSON anywhere outside the Serde.
-- **Defensive re-validation sprinkled downstream** — validation exists exactly
-  once, at construction.
-- **Null-returning APIs** — the two tombstone nulls are the single, commented,
-  contract-required exception.
-- **Swallowed causes** — every wrap passes the original exception along.
+- **Jackson default typing** — the attack it enables is removed by design,
+  not merely made harder.
+- **Messages built out of plain strings** — no maps of strings, and no
+  switching on a `"type"` field of raw JSON anywhere outside the Serde.
+- **Checking the same values again further along** — validation happens exactly
+  once, when the object is built.
+- **Methods that return null** — the two tombstone nulls are the only
+  exception, they are commented, and the Kafka contract requires them.
+- **Losing the cause of an exception** — every wrapper passes the original
+  exception on.
 
 ## Decisions (from DECISIONS.md)
 
-Unknown-field tolerance; tombstone nulls; tri-interface Serde; inline Instant;
-closed polymorphism; 10 KiB cap; poison-pill exception type; restricted name
-charset; topic constants in protocol.
+- Unknown fields in incoming JSON are ignored, on purpose and with a test.
+- The Serde passes null values through, because Kafka tombstones need it.
+- One class implements all three Kafka Serde interfaces.
+- `Instant` support is written inline instead of adding a dependency.
+- The set of message types on the wire is closed and listed explicitly.
+- Payloads larger than 10 KiB are rejected before parsing.
+- Deserialization failures get their own exception type.
+- Names may contain only `[A-Za-z0-9_-]`.
+- Topic names are constants in the `protocol` module.
 
 ## Issues (from ISSUES.md)
 
-**#5** — Jackson's unknown-field default silently in force; made explicit,
-commented, and pinned by a test.
+**#5** — Jackson's default handling of unknown fields was in force without
+anyone choosing it. It is now set explicitly, explained in a comment, and held
+in place by a test.

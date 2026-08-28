@@ -2,9 +2,10 @@
 
 [← Engine](03-engine.md) · [client-core →](05-client-core.md)
 
-`GooseServer` is the imperative shell around the engine: the single process
-allowed to write `game.events`. Its whole life is two phases inside one
-`run()` call:
+`GooseServer` is the [imperative
+shell](11-glossary.md#functional-core-imperative-shell) around the engine, and
+the only process allowed to write to `game.events`. Its entire life is two
+phases inside a single `run()` call:
 
 ```
 run():
@@ -16,74 +17,81 @@ run():
                                  → commit offsets (only after produce confirmed)
 ```
 
-It depends on `engine` (and transitively `protocol`) and is ~280 lines
-including configuration — the point of the pure core is that the shell stays
-small.
+It depends on `engine`, and through it on `protocol`, and is about 280 lines
+including configuration. Keeping the rules pure is what allows this outer layer
+to stay this small.
 
 ## Startup replay: state is throwaway
 
 On every start the server rebuilds *all* state by reading `game.events` from
 the beginning. There is no snapshot, no database, no local file. Consequences:
 
-- a crash can never leave state and log disagreeing — the log *is* the state;
-- deploying a rules change is just a restart (the fold reinterprets nothing;
-  `apply` semantics are stable — see the deadlock amendment in
-  [chapter 3](03-engine.md#the-deadlock-amendment));
-- startup cost grows with log size, which is fine at game scale and is the
-  textbook trade-off event sourcing makes (snapshots would be the next step,
-  deliberately out of scope).
+- a crash can never leave the stored state and the log disagreeing, because
+  the log *is* the state;
+- releasing a change to the rules is just a restart: the fold does not
+  reinterpret anything, and what `apply` means stays the same — see the change
+  to the deadlock rule in
+  [chapter 3](03-engine.md#the-change-to-the-deadlock-rule);
+- startup takes longer as the log grows. At the size of a board game that does
+  not matter, and it is the standard trade-off event sourcing makes. Snapshots
+  would be the next step, and are deliberately out of scope.
 
-Replay uses a consumer with **no group**: manual `assign()` over all
-partitions + `seekToBeginning()`, auto-commit off, positions never committed.
-Group semantics — rebalancing, resuming from committed offsets — are features
-for *sharing progress*, and replay must do the opposite: always read
-everything, alone. Completion is detected by capturing `endOffsets()` first
-and polling until every partition's `position()` reaches it.
+Replay uses a consumer with **no group**: it calls `assign()` on all partitions
+itself, then `seekToBeginning()`, with auto-commit off and positions never
+committed. A [consumer group](11-glossary.md#consumer-group) exists to *share
+progress* between readers, and replay needs the opposite: read everything,
+alone, every time. The server knows it has finished by reading `endOffsets()`
+first and polling until every partition's `position()` has reached it.
 
-Before assigning, the server checks `partitionsFor(Topics.EVENTS)` and fails
-fast with a clear `IllegalStateException` ("is the cluster up and init-topics
-done?") if the topic is missing — auto-topic-creation is disabled clusterwide
-([chapter 7](07-infrastructure-and-build.md)), so a missing topic means a
-half-started environment and the operator should know immediately, not after
-a silent empty replay.
+Before assigning anything, the server calls `partitionsFor(Topics.EVENTS)`. If
+the topic is missing it stops at once with a clear `IllegalStateException`
+asking whether the cluster is up and `init-topics` has run. Kafka is configured
+never to create topics automatically
+([chapter 7](07-infrastructure-and-build.md)), so a missing topic means the
+environment is only half started. Whoever is running it should be told
+immediately, instead of watching a replay that silently finds nothing.
 
 ## The command loop: at-least-once, in the right order
 
 Per poll batch:
 
-1. Every command goes through `handleCommand`: get-or-create the game's state
-   (`computeIfAbsent` — atomic get-or-insert instead of check-then-act),
+1. Every command goes through `handleCommand`, which fetches the game's state
+   or creates it. It uses `computeIfAbsent`, which looks up and inserts in one
+   step, instead of checking first and then inserting. Then it calls
    `engine.decide(state, command, dice)`.
 2. Rejected commands (empty event list) are logged and dropped.
-3. Accepted: every event is `producer.send(...)`, keyed by `event.gameId()` —
-   the futures are collected. State is folded (`applyEvent`) immediately
-   after; the local map is only ever fed by the exact events sent to the log.
-4. After the batch: `producer.flush()`, then `Future.get()` on **every**
-   pending send — surfacing any produce failure as an exception that kills the
-   batch *before* step 5.
+3. If the command is accepted, each event is sent with `producer.send(...)`,
+   using `event.gameId()` as the key, and the returned futures are kept. The
+   state is folded straight afterwards with `applyEvent`, so the local map is
+   only ever built from exactly the events that were sent to the log.
+4. When the batch is done: `producer.flush()`, then `Future.get()` on **every**
+   pending send. Any failure to write then appears as an exception that stops
+   the batch *before* step 5.
 5. Only then `consumer.commitSync()`.
 
-The ordering of 4 and 5 is the entire delivery-semantics story: offsets are
-never committed for commands whose events might not have reached the log. A
-crash anywhere before step 5 redelivers the commands; the engine's rejection
-logic absorbs most duplicates, a redelivered `RollDice` rolls fresh dice —
-the documented at-least-once window
-([chapter 1](01-architecture.md#delivery-semantics-at-least-once-eyes-open)).
+The order of steps 4 and 5 is the whole delivery story. Offsets are never
+committed for commands whose events might not have reached the log. A crash
+anywhere before step 5 means those commands are delivered again. The engine
+refuses most of the repeats, but a repeated `RollDice` rolls new dice: that is
+the known at-least-once gap
+([chapter 1](01-architecture.md#delivery-guarantees-at-least-once-with-the-limits-stated)).
 
-Producer config: `acks=all` + `enable.idempotence=true` — an acknowledged
-write is on ≥2 replicas (`min.insync.replicas=2`) and internal retries cannot
-duplicate it. Consumer config: durable group `goose-server`, auto-commit
-**off** (auto-commit would commit on a timer, i.e. potentially *before* the
-produce — the exact bug the manual ordering exists to prevent),
-`auto.offset.reset=earliest` so a brand-new group starts from the first
-command.
+Producer settings: `acks=all` and
+[`enable.idempotence=true`](11-glossary.md#idempotent-producer). A confirmed
+write is on at least 2 copies, because `min.insync.replicas=2`, and Kafka's own
+retries cannot write it twice. Consumer settings: the lasting group
+`goose-server`, auto-commit **off**, and `auto.offset.reset=earliest` so that a
+brand-new group starts at the first command. Auto-commit is off because it
+commits on a timer, which could commit *before* the events were written — which
+is precisely the bug the manual ordering above exists to prevent.
 
 ## Threading: single-threaded by design
 
-The thread that calls `run()` owns *everything*: both consumers (replay, then
-commands), the producer, and the `Map<String, GameState>`. There is no lock
-in the file because there is no sharing — **thread confinement** as the
-concurrency strategy, chosen deliberately over synchronization.
+The thread that calls `run()` owns *everything*: both consumers, first for
+replay and then for commands, the producer, and the `Map<String, GameState>`.
+There is no lock anywhere in the file because nothing is shared. Keeping all
+the data inside one thread is the concurrency strategy here, chosen on purpose
+instead of locking.
 
 The one concession to the outside world is shutdown, and it follows Kafka's
 own rules:
@@ -102,78 +110,96 @@ own rules:
   down in `run()`'s `finally`, so `close()` is bounded even if the loop died
   of an exception.
 
-`volatile` is used exactly for what it is safe for — single-variable
-visibility — never read-modify-write.
+`volatile` is used only for what it is safe for: making one variable's new
+value visible to another thread. It is never used for read-then-write
+sequences, which it does not protect.
 
 ## Dice: `SecureRandom`, server-side only
 
-`main()` wires `DiceRoller` to a `SecureRandom` (behind the `RandomGenerator`
-interface). Clients cannot roll, and the server's rolls are not predictable
-from prior observations the way a seeded `java.util.Random` would be. For a
-game this is arguably ceremony — but the point of the project includes
-security-by-default habits, and the cost is one line. The E2E test injects a
-scripted roller through the same seam; `main` is the only place randomness
-exists.
+`main()` connects `DiceRoller` to a `SecureRandom`, behind the
+`RandomGenerator` interface. Clients cannot roll at all, and the server's rolls
+cannot be predicted from earlier ones, which is possible with a seeded
+`java.util.Random`. For a board game this is more care than strictly needed,
+but building secure habits by default is part of the point of the project, and
+here it costs one line. The end-to-end test supplies a fixed list of rolls
+through the same seam. `main` is the only place in the system where randomness
+exists at all.
 
-## Poison pills
+## Messages that cannot be read
 
-Both consumers poll through a wrapper that catches Kafka's
-`RecordDeserializationException`, logs partition/offset/cause, and
-`seek(partition, offset + 1)` — skipping exactly the bad record. Without the
-seek, the next `poll()` re-reads the same record and the loop degenerates
-into a hot crash-retry cycle on one hostile byte array. A tombstone (null
-command/event) is likewise handled explicitly as "nothing to do". The server
-must outlive anything a client can put on `game.commands`.
+Both consumers poll through a small wrapper. It catches Kafka's
+`RecordDeserializationException`, logs the partition, the offset and the cause,
+and then calls `seek(partition, offset + 1)` to step over exactly that one
+record. Without the `seek`, the next `poll()` returns the same record again and
+the loop turns into an endless crash-and-retry cycle caused by a single hostile
+message — a [poison pill](11-glossary.md#poison-pill). A
+[tombstone](11-glossary.md#tombstone), meaning a null command or event, is
+handled just as openly as "nothing to do". The server has to survive anything a
+client can put on `game.commands`.
 
 ## The single-instance assumption
 
-Commands are keyed by gameId, so a consumer group of N servers would shard
-games cleanly — each game processed by exactly one instance, no coordination.
-But each instance folds *only its own* partitions' events after startup
-replay, so its state for other instances' games would go stale (harmless —
-it never acts on them — but wasteful and confusing). Scaling out properly
-would mean replaying only assigned partitions and handling rebalances.
-Recorded in DECISIONS.md as an explicit, documented limit rather than an
-accidental one: today, run one server.
+Commands are keyed by `gameId`, so several servers in one consumer group would
+divide the games neatly between them: each game handled by exactly one server,
+with no coordination needed. The problem is elsewhere. After the startup
+replay, each server folds only the events of the partitions it was given, so
+its copy of the other servers' games would slowly fall out of date. That is
+harmless, because it never acts on those games, but it wastes memory and
+confuses anyone reading the state. Doing this properly would mean replaying
+only the assigned partitions and handling the moment when Kafka reassigns them.
+DECISIONS.md records this as a limit that was chosen and written down, rather
+than one nobody noticed: for now, run a single server.
 
 ## Patterns applied
 
-- **Imperative shell** around the pure core — all Kafka, all threading, all
-  logging lives here; zero game rules.
-- **Thread confinement** as the concurrency model; signal-and-wait shutdown
-  via the one thread-safe channel (`wakeup`).
-- **Transactional outbox discipline in miniature** — produce-confirm before
-  offset-commit is the same "don't acknowledge input until output is durable"
-  ordering, achieved with Kafka primitives.
-- **Fail fast on environment errors** (missing topic) vs. **contain data
-  errors** (poison pills) — opposite strategies, each matched to its failure
-  class.
+- **Imperative shell** around a pure core — all the Kafka code, all the
+  threading and all the logging live here, and none of the game rules do.
+- **All state inside one thread**, with a shutdown that only signals and then
+  waits, through `wakeup()`, the one method that may be called from another
+  thread.
+- **Do not acknowledge the input until the output is safely stored** — waiting
+  for the events to be confirmed before committing offsets is the same
+  ordering as the transactional outbox pattern, done with plain Kafka features.
+- **Stop immediately on a broken environment** (a missing topic) but **contain
+  a bad message** (a poison pill). Opposite responses, each matched to the kind
+  of failure.
 
 ## Anti-patterns avoided
 
-- **Auto-commit with side effects** — the default `enable.auto.commit=true`
-  silently gives at-most-once for this workload; switched off and replaced
-  with explicit ordering.
-- **Fire-and-forget producing** — every `send` future is confirmed; a produce
-  failure stops the batch instead of vanishing.
-- **Shared mutable state across threads** — no state map behind a lock;
-  confinement instead.
-- **Crash-on-bad-input consumer loops** — the poison-pill seek.
-- **Swallowed `InterruptedException`** — re-interrupt then propagate, in both
-  `awaitAll` and `close`.
-- **Resource ownership ambiguity** — the opener closes; `close()` from
-  another thread never touches a Kafka client beyond `wakeup()`.
+- **Auto-commit while doing real work** — the default
+  `enable.auto.commit=true` quietly turns this workload into at-most-once. It
+  is switched off and replaced with an explicit order of operations.
+- **Sending and not checking** — every `send` is confirmed, so a failed write
+  stops the batch instead of disappearing.
+- **State shared between threads** — there is no state map behind a lock; the
+  state stays in one thread instead.
+- **Consumer loops that die on bad input** — handled by stepping past the bad
+  record.
+- **Ignoring `InterruptedException`** — the interrupt flag is set again and the
+  exception is passed on, in both `awaitAll` and `close`.
+- **Unclear ownership of resources** — whoever opened a resource closes it, and
+  `close()` called from another thread never touches a Kafka client except
+  through `wakeup()`.
 
 ## Decisions (from DECISIONS.md)
 
-Single-threaded ownership; at-least-once (not exactly-once) with the reasoning;
-manual-assign replay; throwaway local state; single-instance assumption;
-deterministic E2E via the DiceRoller seam.
+- One thread owns all the state.
+- At-least-once was chosen over exactly-once, with the reasoning written down.
+- Replay assigns partitions by hand instead of joining a group.
+- Local state can always be thrown away and rebuilt from the log.
+- The server assumes it is the only instance running.
+- The end-to-end test gives the same result every time, through the
+  `DiceRoller` seam.
 
 ## Issues (from ISSUES.md)
 
-**#4** — Testcontainers vs. Docker daemon 29: the shaded docker-java client
-spoke API 1.32, rejected by the daemon; env var and dependency overrides were
-dead ends (the client is *shaded*), fixed with the `api.version=1.44` system
-property baked into failsafe. **#6** — `kafka-clients` does not expose slf4j
-at compile scope; every logging module declares `slf4j-simple` itself.
+**#4** — Testcontainers against Docker daemon 29. The docker-java client
+inside Testcontainers asked for API version 1.32, which the daemon refused.
+Setting an environment variable did not help, and neither did overriding the
+dependency, because the client is *shaded*: it is repackaged inside
+Testcontainers under different class names, so a normal dependency override
+never reaches it. The fix was the system property `api.version=1.44`, set
+permanently in the failsafe configuration.
+
+**#6** — `kafka-clients` does not make slf4j available at compile time, so
+every module that logs declares `slf4j-simple` for itself.

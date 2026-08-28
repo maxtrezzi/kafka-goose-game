@@ -2,8 +2,9 @@
 
 [← client-core](05-client-core.md) · [Infrastructure & build →](07-infrastructure-and-build.md)
 
-`client-tui` is the smallest module and the proof that `client-core`'s seam
-works: a complete UI in two classes, depending on `client-core` only.
+`client-tui` is the smallest module, and it is the proof that the boundary
+drawn by `client-core` works: a complete user interface in two classes,
+depending on `client-core` and nothing else.
 
 | Class | Role |
 |---|---|
@@ -12,25 +13,27 @@ works: a complete UI in two classes, depending on `client-core` only.
 
 ## BoardRenderer: rendering as a pure function
 
-`render(GameView)` returns the full screen as one string: the 63-square
-board, a status block (players, positions, whose turn, traps, winner banner),
-the recent-event log, and a legend. Keeping it pure has one motivation and
-one big payoff:
+`render(GameView)` returns the whole screen as a single string: the 63-square
+board, a status block with the players, their positions, whose turn it is, any
+traps and the winner, then the list of recent events and a legend. Keeping this
+function pure has one reason and one large benefit:
 
-- **Motivation:** rendering logic is layout arithmetic — exactly the kind of
-  code that harbors off-by-one bugs — and layout arithmetic is trivially
-  unit-testable *if* no console is involved.
-- **Payoff:** the tests strip ANSI codes with a regex and assert on plain
-  text (`"55 "`, `"19I"`, `"12 ABCDEF"`, `"*** alice WINS! ***"`). Nine tests
-  cover the serpentine layout, special-square markers, token placement,
-  status, event lines, and the ANSI hygiene itself — with zero terminal
-  automation.
+- **The reason:** rendering is arithmetic about positions, which is exactly the
+  kind of code where off-by-one mistakes hide. That arithmetic is very easy to
+  unit-test *as long as* no console is involved.
+- **The benefit:** the tests remove the ANSI colour codes with a regular
+  expression and then check plain text, such as `"55 "`, `"19I"`,
+  `"12 ABCDEF"` and `"*** alice WINS! ***"`. Nine tests cover the snaking
+  layout, the markers on special squares, where pieces are drawn, the status
+  block, the event lines, and the handling of the ANSI codes themselves —
+  without driving a terminal at all.
 
-### The serpentine board
+### The snaking board
 
-The classic board snakes. The grid is 7 rows × 9 columns, square 1 at the
-bottom-left, even rows (0-based, from the bottom) running left→right and odd
-rows right→left, so 63 ends in the top-left region:
+The traditional board winds back and forth. The grid is 7 rows by 9 columns,
+with square 1 at the bottom left. Counting rows from the bottom starting at
+zero, even rows run left to right and odd rows right to left, so square 63 ends
+up in the top-left area:
 
 ```
 55  56  57  58X 59* 60  61  62  63
@@ -42,103 +45,123 @@ rows right→left, so 63 ends in the top-left region:
  1   2   3   4   5*  6>  7   8   9
 ```
 
-Each cell is 8 columns: number (2) + marker (1) + player initials + padding.
-Markers encode the special squares (`*` goose, `>` bridge, `<` maze, `X`
-death, `I` inn, `W` well, `P` prison), colored by class (traps red, jumps
-cyan, geese green); players get one ANSI color each by join position, their
-token being the bold uppercase initial of their name.
+Each cell is 8 columns wide: two for the number, one for the marker, then the
+players' initials and padding. The markers show what the square does — `*`
+goose, `>` bridge, `<` maze, `X` death, `I` inn, `W` well, `P` prison — and are
+coloured by kind: traps red, jumps cyan, geese green. Each player gets one ANSI
+colour, chosen by the order they joined, and their piece is the first letter of
+their name in bold capitals.
 
-One found-in-review edge case is instructive: six players on one square emit
-9 visible characters into the 8-wide cell, and the original padding
-computation called `" ".repeat(-1)` → `IllegalArgumentException` — a renderer
-crash on a *valid* game state. The fix is `Math.max(0, CELL_WIDTH - visible)`
-with a comment explaining the choice (give up one alignment column rather
-than throw) and a pinning test (`sixPlayersOnOneSquareStillRender`). Render
-code must be total over the state space it accepts.
+One edge case found in review is worth describing. Six players on the same
+square produce 9 visible characters inside a cell only 8 wide. The original
+padding calculation then called `" ".repeat(-1)`, which throws
+`IllegalArgumentException`: the renderer crashed on a game state that was
+perfectly *valid*. The fix is `Math.max(0, CELL_WIDTH - visible)`, with a
+comment explaining the choice — lose one column of alignment rather than throw
+— and a test that keeps it that way (`sixPlayersOnOneSquareStillRender`).
+Rendering code must produce a result for every state it is willing to
+accept.
 
 ### Event narration
 
-`eventLine(Event)` renders each event as one human sentence ("alice rolled
-3+4 = 7", "bob moved 6 -> 12 (bridge)") — an exhaustive switch over the
-sealed hierarchy, so a new event type breaks this compile too. String
-formatting pins `Locale.ROOT` (both the `%2d` cells and the lowercased
-`MoveReason`): board output is machine-readable by the tests, and locale-
-dependent formatting in machine-read output is a classic latent bug (the
-Turkish-i problem).
+`eventLine(Event)` turns each event into one sentence a person can read, such
+as "alice rolled 3+4 = 7" or "bob moved 6 -> 12 (bridge)". It is another switch
+that must cover every case, so a new event type breaks this build as well. All
+the formatting fixes `Locale.ROOT`, both for the `%2d` cells and for the
+lower-cased `MoveReason`. The board output is read by the tests as text, and
+formatting that changes with the machine's language settings is a classic
+hidden bug — in Turkish, for example, the lower-case form of "I" is not "i",
+so a name or a keyword can quietly stop matching.
 
-## Main: the imperative rim
+## Main: where all the side effects live
 
 `Main` owns everything impure, and nothing else:
 
-- **Args** `[bootstrap [gameId [player]]]` with defaults
-  `localhost:9092 game-1 <os-user>`; the OS username is sanitized to the
-  protocol's `[A-Za-z0-9_-]{1,20}` shape (strip + truncate, fallback
-  `"player"`) — the default must be *valid by construction* or the first
-  suggested command would throw.
-- **Stdin loop** on the main thread: `join [name]` / `start` / `roll` /
-  `board` / `help` / `quit`. UTF-8 is pinned on the reader. A caught
-  `IllegalArgumentException` (an invalid name typed at the prompt) prints
-  `invalid: …` and continues — user errors are prompts, not stack traces.
-- **Rendering trigger**: the `GameListener` callback (on the client's event
-  loop thread) clears the screen and reprints on every view update. Both
-  threads write to `System.out`; an occasionally interleaved prompt is the
-  accepted cost of a plain-stdio TUI, documented in the class javadoc rather
-  than "fixed" with a terminal library the project doesn't need.
-- **Identity is a convention, not a session**: `join bob` switches which
-  player subsequent `start`/`roll` act as (an `AtomicReference<String>`,
-  since the listener thread reads it for rendering context). There is no
-  authentication anywhere — a deliberate scope line: identity/authn is
-  orthogonal to what the project teaches and is listed as future work with
-  SASL in the README.
+- **Arguments** `[bootstrap [gameId [player]]]`, with the defaults
+  `localhost:9092 game-1 <os-user>`. The operating-system user name is cleaned
+  up to match the protocol's `[A-Za-z0-9_-]{1,20}` rule: remove the characters
+  that are not allowed, cut it to length, and fall back to `"player"` if
+  nothing usable is left. The default has to be valid by construction, or the
+  very first command the program suggests would throw.
+- **The input loop** runs on the main thread and accepts `join [name]`,
+  `start`, `roll`, `board`, `help` and `quit`. The reader is fixed to UTF-8.
+  If an `IllegalArgumentException` arrives, because someone typed an invalid
+  name, it prints `invalid: …` and carries on: a mistake by the user deserves a
+  new prompt, not a stack trace.
+- **What triggers a redraw**: the `GameListener` callback, running on the
+  client's event-loop thread, clears the screen and prints it again on every
+  update. Both threads write to `System.out`, so now and then the prompt
+  appears in the middle of the board. That is the accepted price of a terminal
+  UI built on plain standard output, and it is written down in the class
+  javadoc instead of being "fixed" with a terminal library the project does not
+  need.
+- **Identity is an agreement, not a session**: `join bob` changes which player
+  the following `start` and `roll` commands act as. It is kept in an
+  `AtomicReference<String>` because the listener thread reads it while
+  rendering. There is no authentication anywhere. That is a deliberate limit:
+  proving who a player is has nothing to do with what this project teaches, and
+  the README lists it as future work together with SASL.
 
 Two environmental details with reasons:
 
-- `org.slf4j.simpleLogger.defaultLogLevel=warn` is set first thing in
-  `main()`: kafka-clients logs INFO chattily, and INFO chatter scribbles over
-  an ANSI-painted board.
-- ANSI escapes appear in source **only as `\u001B` unicode escapes**, never
-  as raw ESC bytes. Mid-project, generated sources briefly contained
-  invisible 0x1B control characters — they survive copy-paste, break diffs
-  subtly, and are a maintenance hazard; they were purged with `sed` and the
-  convention was recorded in DECISIONS.md.
+- `org.slf4j.simpleLogger.defaultLogLevel=warn` is the first thing `main()`
+  does. `kafka-clients` writes a great deal at INFO level, and those lines
+  print straight over the board.
+- ANSI escape characters appear in the source **only as `\u001B` unicode
+  escapes**, never as raw ESC bytes. For a while the generated sources
+  contained invisible 0x1B control characters. They survive copy and paste,
+  they make diffs hard to read in ways that are easy to miss, and they are a
+  problem for anyone maintaining the code. They were removed with `sed`, and
+  the rule was written down in DECISIONS.md.
 
-## Blind rolls: an accidental design win
+## Rolling blindly: an unplanned benefit
 
-Because the server rejects out-of-turn `RollDice` with *no events and no
-error*, a client can be driven by the dumbest possible script — pipe `roll`
-every second — and the game still plays out correctly. This is what made the
-automated smoke games possible (two piped clients playing full games through
-the real cluster, [chapter 8](08-testing.md)), and it fell out of the
-"rejections produce no events" decision rather than being designed for. It
-also promptly paid for itself by triggering the well+prison deadlock in the
-first live game.
+Because the server refuses an out-of-turn `RollDice` with *no events and no
+error*, a client can be driven by the simplest possible script — send `roll`
+once a second — and the game still plays correctly. This is what made the
+automated test games possible: two clients fed from a pipe, playing complete
+games through the real cluster ([chapter 8](08-testing.md)). Nobody designed
+this; it followed from the decision that refused commands produce no events. It
+proved its worth almost immediately, by causing the well and prison deadlock in
+the first game played for real.
 
 ## Patterns applied
 
-- **Functional core / imperative shell, in miniature** — the same split as
-  engine/server, one layer up: `BoardRenderer` pure, `Main` impure.
-- **Humble Object** — `Main` is deliberately too thin to need tests; all the
-  logic that *could* be wrong lives in the testable renderer.
-- **Exhaustive rendering** — the sealed hierarchy forces the UI to keep up
-  with the protocol at compile time.
+- **[Functional core, imperative
+  shell](11-glossary.md#functional-core-imperative-shell), on a small scale** —
+  the same split as engine and server, one layer higher: `BoardRenderer` is
+  pure, `Main` is not.
+- **Humble object** — `Main` is deliberately too thin to be worth testing, and
+  all the logic that could actually be wrong sits in the renderer, which is
+  easy to test.
+- **Rendering that must cover every case** — the sealed interface forces the UI
+  to keep pace with the protocol, and the compiler checks it.
 
 ## Anti-patterns avoided
 
-- **Logic in the I/O layer** — no game or layout decisions in `Main`.
-- **Partial functions in rendering** — the negative-repeat crash class,
-  eliminated and pinned.
-- **Locale-dependent machine output** — `Locale.ROOT` pinned.
-- **Invisible control characters in source** — the `\u001B` convention.
-- **Framework reflex** — no curses/JLine dependency for a problem plain
-  stdio solves; the interleaved-prompt trade-off is documented instead.
+- **Logic in the input/output layer** — `Main` makes no decisions about the
+  game or the layout.
+- **Rendering code that fails on some valid inputs** — the negative-repeat
+  crash was removed and a test keeps it away.
+- **Output that changes with the machine's language settings** — every format
+  call fixes `Locale.ROOT`.
+- **Invisible control characters in source files** — the `\u001B` rule.
+- **Reaching for a framework by reflex** — no curses or JLine dependency for a
+  problem that plain standard output solves; the occasional interleaved prompt
+  is documented instead.
 
 ## Decisions (from DECISIONS.md)
 
-Pure renderer; serpentine convention; `\u001B` escapes; kafka log level;
-blind-roll safety; `join` switches identity.
+- The renderer is a pure function.
+- The board snakes, with the row directions described above.
+- ANSI escapes are written only as `\u001B` in source.
+- Kafka's log level is lowered before anything is printed.
+- Rolling out of turn is safe, which makes scripted clients possible.
+- `join` changes which player the next commands act as.
 
 ## Issues (from ISSUES.md)
 
-**#7** was *found* through this module's smoke games (the deadlock — fixed in
-the engine). The overfull-cell crash and a test asserting a goose on a
-non-goose square (55) were review-cycle findings fixed before commit.
+**#7**, the deadlock, was *found* through the test games played with this
+module and fixed in the engine. The crash on an overfull cell, and a test that
+claimed square 55 was a goose square when it is not, were both found during
+review and fixed before the commit.

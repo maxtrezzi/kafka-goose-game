@@ -2,8 +2,8 @@
 
 [← Patterns catalog](09-patterns-and-antipatterns.md) · [Glossary →](11-glossary.md)
 
-A multiplayer Game of the Goose (Gioco dell'Oca), written to learn Kafka and to
-practise modern Java.
+A multiplayer Game of the Goose (Gioco dell'Oca), built as a test bed for
+Kafka 4.x and Java 21.
 
 This chapter is the plan the project was actually built from, kept as it was
 written. It is a working document, so it is written as short checklists rather
@@ -105,8 +105,8 @@ malformed JSON rejected; oversized payload rejected. `mvn -pl protocol test` gre
 
 ## Step 4 — `engine` module (game rules)
 
-Pure logic, with no Kafka imports at all. This is where most of the Java
-practice happens.
+Pure logic, with no Kafka imports at all. This is where the Java 21 features
+carry the most weight.
 
 - `Board`: 63 squares; geese 5,9,14,18,23,27,32,36,41,45,50,54,59; bridge 6→12; inn 19
   (miss one turn); well 31 and prison 52 (stuck until another player lands there); maze

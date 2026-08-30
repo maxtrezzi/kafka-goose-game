@@ -2,12 +2,18 @@
 
 [← Implementation plan](10-implementation-plan.md) · [Overview](00-overview.md)
 
-The chapters use a number of terms that are standard in their field but are
-not obvious if you have not met them before. Each one is explained here in a
-few lines, with a link to a source you can read for the full version.
+The chapters use the vocabulary of their fields without stopping to define it.
+This is that reference: each term in a few lines, with a link to the source
+that treats it properly.
 
-The terms are kept in the chapters on purpose: they are the words the Kafka
-and Java communities actually use, so learning them is part of the point.
+It is a convenience, not a tutorial. The chapters assume you are reading for
+the design rather than for an introduction to Kafka, so nothing here has to be
+read first and nothing here is explained twice. It is simply quicker to settle
+a word in two lines than to break off and go looking for it.
+
+The terms themselves stay in the chapters unchanged. They are the words these
+communities use, and paraphrasing them would only make the documentation
+harder to match against the literature.
 
 ## Kafka terms
 

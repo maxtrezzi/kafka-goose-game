@@ -125,8 +125,8 @@ nothing at all — without saying so.
 - **Using sleeps to keep two sides in step** — there are none in the suite. The
   single deadline exists to stop a hung test and to print what it saw, not to
   wait for something.
-- **Faking the very infrastructure you are trying to learn** — the broker is
-  real wherever the broker is the point.
+- **Faking the very infrastructure under test** — the broker is real wherever
+  the broker's behaviour is the thing being checked.
 - **Checking details that are not the agreement** — whole records are compared
   where the record is the contract, and rendered text is searched with
   `contains` where the layout is the contract.

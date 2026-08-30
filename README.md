@@ -1,11 +1,13 @@
 # kafka-goose-game
 
 A multiplayer **Game of the Goose** (Gioco dell'Oca) built on plain **Java 21**
-and **Apache Kafka**, with no frameworks. It exists to learn two things at
-once. The first is how Kafka actually works: topics, partitions, replication,
-consumer groups and replay. The second is modern Java: records, sealed
-interfaces, pattern matching and virtual threads. Both are practised on
-something you can really sit down and play.
+and **Apache Kafka**, with no frameworks. It is a test bed for what is current
+in both: **Kafka 4.x** without ZooKeeper, driven through the raw client APIs
+rather than a framework, and **Java 21** used for what it now offers —
+records, sealed interfaces, exhaustive pattern matching, virtual threads. The
+point is to see how those features behave when they carry a complete system,
+not a snippet: a real cluster, a real failure mode, a game you can sit down and
+play.
 
 Everything is **[event-sourced](docs/11-glossary.md#event-sourcing) and
 [server-authoritative](docs/11-glossary.md#server-authoritative)**. Clients only
@@ -191,11 +193,12 @@ State is disposable everywhere; the log is the truth.
 - Or work through the log yourself, with the console consumer from experiment 2.
   Every board any client ever displayed can be derived from that stream.
 
-### 5. Optional: SASL/SCRAM + ACLs (left as an exercise)
+### 5. Not done here: SASL/SCRAM and ACLs
 
 The cluster runs on PLAINTEXT on purpose, so that every experiment above works
-without setting up credentials first. Making it secure is a good exercise. Add
-a `SASL_PLAINTEXT` listener using SCRAM-SHA-256, create the users
+without setting up credentials first. Closing that gap is the obvious next
+step, and it is a small one. Add a `SASL_PLAINTEXT` listener using
+SCRAM-SHA-256, create the users
 `goose-server` and `goose-client` with `kafka-configs.sh`, then use
 `kafka-acls.sh` to give clients permission to *write* only to `game.commands`
 and to *read* only from `game.events`, with the opposite rights for the server.

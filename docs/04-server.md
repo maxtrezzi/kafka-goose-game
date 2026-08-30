@@ -120,8 +120,8 @@ sequences, which it does not protect.
 `RandomGenerator` interface. Clients cannot roll at all, and the server's rolls
 cannot be predicted from earlier ones, which is possible with a seeded
 `java.util.Random`. For a board game this is more care than strictly needed,
-but building secure habits by default is part of the point of the project, and
-here it costs one line. The end-to-end test supplies a fixed list of rolls
+but a secure default that costs one line is not worth arguing about, and the
+seam is the same one the tests use. The end-to-end test supplies a fixed list of rolls
 through the same seam. `main` is the only place in the system where randomness
 exists at all.
 

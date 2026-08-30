@@ -135,6 +135,13 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   `kafka-2` stopped the whole time, then the broker rejoins and the ISR heals.
   Stopping a broker "mid-game" raced the ~90-second blind-roll games and could
   silently test a finished game (ISSUES.md #8).
+- **The documentation states the project as a test bed, not as study notes.**
+  The original text framed it as "learning Kafka", which misrepresents both the
+  work and its author: the point was to put Kafka 4.x and Java 21 under load
+  together and see how they behave carrying a whole system. The glossary stays,
+  but is stated as what it is: a reference for a reader who is here for the
+  design and wants a term settled in two lines, not a tutorial, and not the
+  notes of an author meeting those terms for the first time.
 - **The chapters are written for B2-level technical English** (readers who do
   not have English as a first language), and the terms that stay are collected
   in `docs/11-glossary.md` instead of being replaced. Metaphors that carried

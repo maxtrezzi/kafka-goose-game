@@ -65,8 +65,8 @@ then `PlayerStuck` or `PlayerFreed` if they apply, then `TurnStarted` or
 
 - each event means one thing and needs one case in the fold, so the folds stay
   simple;
-- the log can be read move by move in a console consumer, which is useful while
-  learning;
+- the log can be read move by move in a console consumer, which makes the
+  system's behaviour observable without any tooling;
 - a future UI can animate each step, because each step is already a separate
   event.
 

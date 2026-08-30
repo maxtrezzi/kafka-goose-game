@@ -13,15 +13,21 @@ explanation and a link to a source.
 
 A multiplayer **Game of the Goose** (Gioco dell'Oca) implemented in **plain
 Java 21** with the raw **`kafka-clients`** library — no Spring, no Kafka
-Streams, no framework of any kind. It exists to learn two things at once:
+Streams, no framework of any kind. It is a test bed for two current stacks,
+put under load together:
 
-1. **Kafka's core mechanics**, hands-on: topics, partitions, replication,
-   consumer groups, offset management, replay, delivery semantics, failure
-   modes — by using the low-level client APIs directly instead of behind a
-   framework's abstraction.
-2. **Modern Java (21)**: records, sealed interfaces, exhaustive pattern
-   matching, virtual threads, text blocks, immutable collections — used as the
-   *primary* design tools, not as extras added at the end.
+1. **Kafka 4.x through the low-level client APIs**: KRaft with no ZooKeeper,
+   keying and partition ordering, consumer groups against manual assignment,
+   offset control, replay, delivery guarantees, failure modes. Driving the
+   clients directly is what makes those choices visible, instead of settled by
+   a framework's defaults.
+2. **Java 21 as the design language**: records, sealed interfaces, exhaustive
+   pattern matching, virtual threads, text blocks, immutable collections — used
+   as the *primary* structure of the code, not as extras added at the end.
+
+The question the project answers is how those features hold up when they carry
+a whole system: a three-broker cluster, an authoritative server, several
+clients, and a failure injected on purpose.
 
 The result is a playable game: a 3-broker Kafka cluster in Docker, one
 authoritative server process, and any number of terminal clients that join,
@@ -98,8 +104,8 @@ in-context version of the two project logs:
 - [`DECISIONS.md`](../DECISIONS.md) — every non-obvious choice, with reasoning
 - [`ISSUES.md`](../ISSUES.md) — every problem hit, what was tried, what fixed it
 
-For a hands-on introduction (quickstart, TUI commands, Kafka experiments to
-run against the live cluster), see the top-level [README](../README.md). The
+To run the system (quickstart, TUI commands, the Kafka experiments to try
+against a live cluster), see the top-level [README](../README.md). The
 step-by-step build order the project followed is in
 [chapter 10](10-implementation-plan.md).
 
@@ -110,9 +116,9 @@ never revisited:
 
 | Constraint | Value | Motivation |
 |---|---|---|
-| Language / stack | Plain Java 21 + `kafka-clients` 4.3.0 | Learning goal: see Kafka without a framework in the way |
-| Serialization | JSON via Jackson, hand-written `Serde` | Human-readable log (a learning feature in itself); no Schema Registry to operate |
+| Language / stack | Plain Java 21 + `kafka-clients` 4.3.0 | Every Kafka decision stays explicit instead of being made by a framework |
+| Serialization | JSON via Jackson, hand-written `Serde` | A log that can be read straight off the topic; no Schema Registry to operate |
 | Cluster | 3 KRaft brokers, topics RF=3, `min.insync.replicas=2` | Enough replication to *demonstrate* broker-loss survival, small enough for a laptop |
-| Architecture | Event-sourced, server-authoritative, topics keyed by `gameId` | This is the main thing the project sets out to teach |
+| Architecture | Event-sourced, server-authoritative, topics keyed by `gameId` | The design under test: everything else follows from it |
 | UI | Terminal first, `client-core` kept UI-agnostic | A future web/desktop UI must be able to reuse the client layer unchanged |
 | Tests | JUnit 5 everywhere; Testcontainers for the E2E | `mvn test` must never require Docker; `mvn verify` proves the real stack |

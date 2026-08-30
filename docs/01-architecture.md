@@ -36,8 +36,9 @@ that can be trusted.
 ## Why event sourcing, and why here
 
 [Event sourcing](11-glossary.md#event-sourcing) is more than most projects
-need. It was chosen here because no other architecture uses so many Kafka
-concepts at the same time, on a subject that stays simple enough to follow:
+need. It was chosen here because no other architecture puts so many Kafka
+mechanics under load at once, on a domain small enough that none of them are
+hidden by the business rules:
 
 - **The log as source of truth** — Kafka's actual data model, not a queue
   metaphor. State is derived, disposable, and rebuildable (`replay`).
@@ -75,8 +76,8 @@ write from anyone, so any process could write to `game.events` directly. This
 is a deliberate limit on the scope of the project. The cluster stays on
 PLAINTEXT so that every command-line experiment works without setting up
 credentials first. The README describes the missing piece — SASL/SCRAM with
-access rules, letting clients only write commands and only read events — as an
-exercise to do next.
+access rules, letting clients only write commands and only read events — as the
+next step rather than a missing one.
 
 ## Keying, partitions, and ordering
 
@@ -148,9 +149,10 @@ the same state can give a different result.
 
 Real exactly-once processing would need Kafka transactions, so that producing
 events and committing offsets happen as one atomic step. That was left out on
-purpose: it is the wrong kind of complexity for a learning project, and the
-trade-off is recorded in `DECISIONS.md`. The point worth learning is that this
-gap is *known and accepted*, not discovered by accident.
+purpose: transactions are the wrong complexity for this system, and the
+trade-off is recorded in `DECISIONS.md`. What matters is that the gap is
+*known and accepted*, and documented where it is created, rather than
+discovered later by someone reading a stack trace.
 
 Clients need no delivery guarantees at all: they never commit offsets, they
 replay from the beginning on every start, and folding is idempotent from a

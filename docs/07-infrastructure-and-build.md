@@ -11,8 +11,8 @@ topics. Each choice, with its reason:
 ### KRaft, combined mode, three nodes
 
 - **[KRaft](11-glossary.md#kraft), so no ZooKeeper** — this is how Kafka 4.x
-  manages itself, and learning to operate ZooKeeper in 2026 would mean learning
-  something on its way out. All three nodes run as **both controller and
+  manages itself, and ZooKeeper is on its way out. All three nodes run as
+  **both controller and
   broker** (`KAFKA_PROCESS_ROLES: broker,controller`), and all three take part
   in the controller vote. That is fine for development and saves running a
   second group of three containers. A production cluster would keep the two
@@ -23,8 +23,9 @@ topics. Each choice, with its reason:
   lost, and makes writes fail visibly when a second one goes. Both were shown
   on a running cluster ([chapter 8](08-testing.md)).
 - **No volumes, on purpose** — `docker compose down` leaves a completely fresh
-  cluster. For a learning project, being able to throw everything away is worth
-  more than keeping it: every experiment starts from a known state.
+  cluster. Being able to throw the state away is worth more here than keeping
+  it: every experiment starts from the same known point, so a result means
+  something.
 
 ### Listeners: two networks, two addresses
 

@@ -17,8 +17,14 @@ on:
 
 # A second push to the same branch makes the run already in flight pointless.
 # On main every commit is kept, because that history is what people land on.
+#
+# The event name is part of the group on purpose. Without it, the pull_request
+# run and the push run for the same branch share a group, and the one that
+# starts second cancels the first — so the push run gets cancelled and the
+# pull_request run is then skipped by the condition below, leaving the commit
+# with no checks at all.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 jobs:

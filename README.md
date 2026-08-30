@@ -1,15 +1,19 @@
 # kafka-goose-game
 
 A multiplayer **Game of the Goose** (Gioco dell'Oca) built on plain **Java 21**
-and **Apache Kafka** — no frameworks. The point of the project is to learn
-Kafka's core mechanics (topics, partitions, replication, consumer groups,
-replay) and to exercise modern Java (records, sealed interfaces, pattern
-matching, virtual threads) on something you can actually play.
+and **Apache Kafka**, with no frameworks. It exists to learn two things at
+once. The first is how Kafka actually works: topics, partitions, replication,
+consumer groups and replay. The second is modern Java: records, sealed
+interfaces, pattern matching and virtual threads. Both are practised on
+something you can really sit down and play.
 
-Everything is **event-sourced and server-authoritative**: clients only send
-*intents*, a single server turns them into *facts*, and every piece of state —
-server and client alike — is a fold over the fact log. Kill any process and
-restart it: it rebuilds itself by replaying the topic.
+Everything is **[event-sourced](docs/11-glossary.md#event-sourcing) and
+[server-authoritative](docs/11-glossary.md#server-authoritative)**. Clients only
+send *requests*, and a single server turns them into *facts*. Every piece of
+state, on the server and in each client alike, is a
+[fold](docs/11-glossary.md#fold) over the log of those facts: the events applied
+one by one, in order. Kill any process and restart it, and it rebuilds itself by
+reading the topic again.
 
 ## Architecture
 
@@ -34,16 +38,22 @@ restart it: it rebuilds itself by replaying the topic.
 
 | Module        | Depends on   | What it is |
 |---------------|--------------|------------|
-| `protocol`    | —            | The wire contract: sealed `Command`/`Event` records, JSON `JsonSerde` (closed `@JsonSubTypes` polymorphism, 10 KiB cap), topic names |
-| `engine`      | protocol     | Pure game rules, zero Kafka imports: `GameEngine.decide(state, command, dice) -> List<Event>`, `GameState.apply(event)` |
-| `server`      | engine       | The authoritative host: replays `game.events`, then folds `game.commands` → `decide` → produce events (at-least-once, `acks=all`, idempotent producer) |
-| `client-core` | protocol     | UI-agnostic client library: sends commands, tails events on a virtual thread, folds them into a `GameView` for any UI |
-| `client-tui`  | client-core  | ANSI terminal UI: serpentine 63-square board, stdin command loop |
+| `protocol`    | —            | The [wire contract](docs/11-glossary.md#wire-contract): sealed `Command` and `Event` records, the JSON `JsonSerde` with a fixed list of message types and a 10 KiB limit, and the topic names |
+| `engine`      | protocol     | The game rules as pure functions, with no Kafka imports: `GameEngine.decide(state, command, dice) -> List<Event>` and `GameState.apply(event)` |
+| `server`      | engine       | The only process that decides: it replays `game.events`, then for each command runs `decide`, writes the resulting events, and folds them into its own state (at-least-once, `acks=all`, idempotent producer) |
+| `client-core` | protocol     | A client library that knows nothing about any UI: it sends commands, follows events on a virtual thread, and folds them into a `GameView` any UI can draw |
+| `client-tui`  | client-core  | The terminal UI in ANSI colour: the 63-square board drawn as a snaking grid, plus a command loop reading from standard input |
 
-The board: 63 squares, geese (`*`) double your move, bridge 6→12, inn 19
-(miss a turn), well 31 and prison 52 (stuck until someone relieves you — but
-the **last free player never gets trapped**, so a game can't freeze), maze
-42→39, death 58→1, land exactly on 63 to win (overshoot bounces back).
+The board has 63 squares:
+
+- a goose (`*`) repeats your move;
+- the bridge sends you from 6 to 12, the maze back from 42 to 39, and death at
+  58 back to 1;
+- the inn at 19 costs you one turn;
+- the well at 31 and the prison at 52 hold you until another player lands
+  there — except that the **last free player is never trapped**, so a game can
+  never freeze;
+- you win by landing exactly on 63, and going past it bounces you back.
 
 ## Quickstart
 
@@ -74,7 +84,7 @@ it repaints the exact board state by replaying `game.events` from the beginning.
 |---------------|--------|
 | `join [name]` | join the game (defaults to your player name; also switches your identity) |
 | `start`       | start the game (2–6 players, from the lobby) |
-| `roll`        | roll the dice on your turn (out-of-turn rolls are ignored by the server) |
+| `roll`        | roll the dice on your turn (a roll out of turn is simply ignored by the server) |
 | `board`       | reprint the board |
 | `help`        | command list |
 | `quit`        | leave — the game goes on; rejoin to catch up by replay |
@@ -90,23 +100,32 @@ mvn test        # unit tests only — no Docker needed
 mvn verify      # + the Testcontainers E2E (spins up a throwaway Kafka container)
 ```
 
-Building a single module needs the reactor flag: `mvn -pl engine -am test`
-(`-am` also builds the sibling modules it depends on).
+Building one module on its own needs an extra flag: `mvn -pl engine -am test`.
+Without `-am`, Maven looks for the other modules in the local repository, where
+a fresh clone has never installed them.
 
-Test map: `protocol` round-trips every message and rejects malformed/oversized/
-unknown-type payloads; `engine` covers every board rule plus full scripted
-games; `server` has a deterministic end-to-end test (scripted dice, real Kafka
-in a container); `client-core` tests the view fold; `client-tui` tests the
-renderer on ANSI-stripped output.
+What each module's tests cover:
+
+- `protocol` — writes and reads back every message type, and rejects payloads
+  that are malformed, too large, or of an unknown type.
+- `engine` — every rule on the board, plus complete games played with a fixed
+  list of dice rolls.
+- `server` — one end-to-end test that gives the same result every time, using
+  scripted dice against a real Kafka running in a container.
+- `client-core` — the fold that turns events into the view.
+- `client-tui` — the renderer, checked on its output with the colour codes
+  removed.
 
 ## Kafka experiments
 
 The cluster is sized for exactly these. All commands run from the repo root.
 
-### 1. Kill a broker mid-game (replication saves you)
+### 1. Stop a broker in the middle of a game
 
-Both topics are RF=3 with `min.insync.replicas=2` — any single broker can die
-without losing a message or stopping the game.
+Both topics keep three copies of every partition, with
+[`min.insync.replicas=2`](docs/11-glossary.md#replication-factor-isr-and-minimum-in-sync-replicas).
+Any single broker can stop without losing a message and without stopping the
+game.
 
 ```bash
 docker stop goose-kafka-2      # mid-game, while people are rolling
@@ -121,10 +140,11 @@ docker exec goose-kafka-1 /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server localhost:29092 --describe --topic game.events
 ```
 
-While the broker is down, partitions it led get a new leader and `Isr:` drops
-to two entries; after restart it returns to three. Stopping a *second* broker
-breaks the `min.insync.replicas=2` guarantee: the idempotent producer's
-`acks=all` writes start failing — that's the durability contract doing its job.
+While the broker is down, the partitions it was leading get a new leader and
+`Isr:` drops to two entries. After the restart it goes back to three. Stopping a
+*second* broker breaks the `min.insync.replicas=2` promise, and the producer's
+`acks=all` writes start to fail. That is not a defect: it is the durability
+guarantee doing exactly what it says.
 
 ### 2. Watch the event log live
 
@@ -136,8 +156,9 @@ docker exec goose-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
   --from-beginning --property print.key=true
 ```
 
-Play a few turns and watch `DiceRolled` / `PlayerMoved` / `PlayerStuck` facts
-appear, keyed by gameId. This is also the fastest way to debug a rule dispute.
+Play a few turns and watch the `DiceRolled`, `PlayerMoved` and `PlayerStuck`
+facts appear, each keyed by its `gameId`. This is also the quickest way to
+settle an argument about what the rules did.
 
 ### 3. Inspect consumer groups and offsets
 
@@ -149,45 +170,50 @@ docker exec goose-kafka-1 /opt/kafka/bin/kafka-consumer-groups.sh \
   --bootstrap-server localhost:29092 --describe --group goose-server
 ```
 
-You'll see one durable `goose-server` group (its `CURRENT-OFFSET` on
-`game.commands` advances only after the resulting events are safely produced —
-that's the at-least-once handoff) and one throwaway `goose-client-<uuid>` group
-per running client, which never commits at all: clients always replay from
-`earliest` and keep nothing.
+You will see one lasting group, `goose-server`. Its `CURRENT-OFFSET` on
+`game.commands` moves forward only after the events that command produced have
+been safely written — that ordering is what makes the delivery
+[at-least-once](docs/11-glossary.md#delivery-semantics-at-most-once-at-least-once-exactly-once).
+
+You will also see one `goose-client-<uuid>` group per running client. Those
+never commit anything at all: a client always reads from `earliest` and keeps
+nothing of its own.
 
 ### 4. Replay a finished game
 
 State is disposable everywhere; the log is the truth.
 
-- Restart the **server**: it logs how many events it replayed and can continue
-  any unfinished game — including ones that finished, whose `GameWon` it will
-  faithfully refold.
-- Restart a **client** into an old gameId: the full board, winner banner
-  included, reappears from replay alone.
-- Or fold it by eye with the console consumer from experiment 2 — every
-  `GameView` any client ever showed is derivable from that stream.
+- Restart the **server**. It logs how many events it read back and can carry on
+  with any unfinished game. Games that already ended are rebuilt too, `GameWon`
+  included.
+- Restart a **client** with an old `gameId`. The whole board comes back from the
+  log alone, winner line and all.
+- Or work through the log yourself, with the console consumer from experiment 2.
+  Every board any client ever displayed can be derived from that stream.
 
 ### 5. Optional: SASL/SCRAM + ACLs (left as an exercise)
 
-The cluster is intentionally PLAINTEXT for learnability. A good hardening
-exercise: add a `SASL_PLAINTEXT` listener with SCRAM-SHA-256, create
-`goose-server` and `goose-client` users with `kafka-configs.sh`, then use
-`kafka-acls.sh` to let clients *write* only `game.commands` and *read* only
-`game.events`, while the server gets the inverse — encoding
-"clients propose, the server decides" at the broker level.
+The cluster runs on PLAINTEXT on purpose, so that every experiment above works
+without setting up credentials first. Making it secure is a good exercise. Add
+a `SASL_PLAINTEXT` listener using SCRAM-SHA-256, create the users
+`goose-server` and `goose-client` with `kafka-configs.sh`, then use
+`kafka-acls.sh` to give clients permission to *write* only to `game.commands`
+and to *read* only from `game.events`, with the opposite rights for the server.
+That puts the rule "clients ask, the server decides" into the brokers
+themselves, instead of trusting the code to respect it.
 
 ## Documentation
 
-The full top-down implementation documentation lives in
-[`docs/`](docs/00-overview.md): architecture, one chapter per layer,
-infrastructure, testing strategy, and a catalog of the patterns applied and
-anti-patterns avoided — with the design motivations for each choice. Terms
-that are standard in Kafka, Java or software design but not obvious on first
-reading are explained in the
-[glossary](docs/11-glossary.md), each with a link to a source. The same
-chapters are also bundled as a single
-[PDF](docs/kafka-goose-game-implementation.pdf), rebuilt with
-`./docs/build-pdf.sh` (needs pandoc and WeasyPrint).
+The full description of how the project is built, and why, lives in
+[`docs/`](docs/00-overview.md): the architecture, one chapter per layer, the
+infrastructure, the testing strategy, and a complete list of the patterns used
+and the anti-patterns avoided, each with the reasoning behind it.
+
+Terms that are standard in Kafka, Java or software design but not obvious on
+first reading are explained in the [glossary](docs/11-glossary.md), each in a
+few lines and with a link to a source. The same chapters are also available as
+one [PDF](docs/kafka-goose-game-implementation.pdf), which can be rebuilt with
+`./docs/build-pdf.sh` (it needs pandoc and WeasyPrint).
 
 Project logs:
 
@@ -198,9 +224,10 @@ Project logs:
 
 ## Future ideas
 
-Web UI (Javalin + SSE) on top of `client-core`; Avro + Schema Registry
-migration; multiple server instances (commands are already partitioned by
-gameId — see the single-instance caveat in DECISIONS.md).
+- A web UI, using Javalin with server-sent events, built on `client-core`.
+- A move from JSON to Avro with a Schema Registry.
+- Running several server instances at once. Keying by `gameId` already allows
+  it; DECISIONS.md explains why there is only one today.
 
 ## License
 

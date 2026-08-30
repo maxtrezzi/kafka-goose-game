@@ -1,0 +1,77 @@
+name: CI
+
+# Runs on every branch, so a branch is checked before it is merged, and on
+# pull requests from forks, which the push trigger does not cover.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # `verify` runs both layers: the 104 unit tests through surefire in every
+      # module, and the end-to-end test through failsafe in `server`, which
+      # starts a real Kafka broker with Testcontainers. Docker is already
+      # installed on the runner, so nothing extra is needed for it.
+      #
+      # This also covers the two things a local build cannot: it builds from a
+      # clean clone, with an empty local repository, and it runs the E2E
+      # against whatever Docker version the runner ships — which is what the
+      # api.version property in server/pom.xml exists to cope with.
+      - name: mvn verify
+        run: mvn -B verify
+
+      - name: Keep the test reports when something fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: "**/target/*-reports/"
+          if-no-files-found: ignore
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc, WeasyPrint and poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc poppler-utils fonts-dejavu-core \
+            libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libffi8
+          # pipx, not pip: the runner's system Python refuses installs into it.
+          # The version is pinned so the rendering does not change under us.
+          pipx install "weasyprint==69.0"
+          weasyprint --version
+          pandoc --version | head -1
+
+      # Fails on a broken internal link — a renamed heading breaks every link
+      # that pointed at it, silently. External links only fail the build when
+      # the server says the page is gone; a timeout or a rate limit is a
+      # warning, because it says more about the network than about the link.
+      - name: Check the links
+        run: python3 docs/check-links.py --external
+
+      # Fails if the committed PDF is older than the Markdown, if the document
+      # no longer builds cleanly, or if it contains a file:// link pointing
+      # into somebody's home directory.
+      - name: Check the PDF
+        run: ./docs/check-pdf.sh

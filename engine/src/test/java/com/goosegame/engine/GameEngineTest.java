@@ -271,6 +271,106 @@ class GameEngineTest {
         assertEquals(new Event.TurnStarted(GAME, NOW, "carol"), events.getLast());
     }
 
+    // --- Trap edge cases, found by mutation testing ---
+
+    /** Puts {@code player} on {@code square} and traps them there. */
+    private static GameState stuckOn(GameState state, String player, int square) {
+        return at(state, player, square).apply(new Event.PlayerStuck(GAME, NOW, player, square));
+    }
+
+    @Test
+    void aCurrentPlayerWhoIsStuckCannotRoll() {
+        // unreachable through decide(), whose turn logic never hands the turn
+        // to a trapped player; the guard is pinned anyway
+        var state = stuckOn(running("alice", "bob"), "alice", 31);
+        assertEquals(List.of(),
+                engine.decide(state, new Command.RollDice(GAME, "alice"), NO_DICE));
+    }
+
+    @Test
+    void twoPlayerSwapInTheWellFreesTheOccupant() {
+        // with two players the swap is what keeps someone free, so the
+        // last-free-player rule must not waive it
+        var state = stuckOn(running("alice", "bob"), "alice", 31)
+                .apply(new Event.TurnStarted(GAME, NOW, "bob"));
+        state = at(state, "bob", 29);
+
+        assertEquals(List.of(
+                new Event.DiceRolled(GAME, NOW, "bob", 1, 1),
+                new Event.PlayerMoved(GAME, NOW, "bob", 29, 31, MoveReason.NORMAL),
+                new Event.PlayerStuck(GAME, NOW, "bob", 31),
+                new Event.PlayerFreed(GAME, NOW, "alice"),
+                new Event.TurnStarted(GAME, NOW, "alice")),
+                engine.decide(state, new Command.RollDice(GAME, "bob"), dice(1, 1)));
+    }
+
+    @Test
+    void landingInTheWellDoesNotFreeThePrisoner() {
+        // only the occupant of the *same* square is swapped out
+        var state = stuckOn(running("alice", "bob", "carol"), "alice", 52)
+                .apply(new Event.TurnStarted(GAME, NOW, "bob"));
+        state = at(state, "bob", 29);
+
+        assertEquals(List.of(
+                new Event.DiceRolled(GAME, NOW, "bob", 1, 1),
+                new Event.PlayerMoved(GAME, NOW, "bob", 29, 31, MoveReason.NORMAL),
+                new Event.PlayerStuck(GAME, NOW, "bob", 31),
+                new Event.TurnStarted(GAME, NOW, "carol")),
+                engine.decide(state, new Command.RollDice(GAME, "bob"), dice(1, 1)));
+    }
+
+    @Test
+    void theInnIsNotASwap() {
+        // alice rests at the inn; carol lands there too. Nobody is swapped out:
+        // alice is freed only by the rotation, which still skips her once
+        var state = stuckOn(running("alice", "bob", "carol"), "alice", 19)
+                .apply(new Event.TurnStarted(GAME, NOW, "carol"));
+        state = at(state, "carol", 17);
+
+        assertEquals(List.of(
+                new Event.DiceRolled(GAME, NOW, "carol", 1, 1),
+                new Event.PlayerMoved(GAME, NOW, "carol", 17, 19, MoveReason.NORMAL),
+                new Event.PlayerStuck(GAME, NOW, "carol", 19),
+                new Event.PlayerFreed(GAME, NOW, "alice"),
+                new Event.TurnStarted(GAME, NOW, "bob")),
+                engine.decide(state, new Command.RollDice(GAME, "carol"), dice(1, 1)));
+    }
+
+    @Test
+    void theInnTrapsEvenTheLastFreePlayer() {
+        // the waiver is for the well and the prison only: the inn frees by itself
+        var state = stuckOn(running("alice", "bob"), "alice", 31)
+                .apply(new Event.TurnStarted(GAME, NOW, "bob"));
+        state = at(state, "bob", 17);
+
+        var events = engine.decide(state, new Command.RollDice(GAME, "bob"), dice(1, 1));
+        assertEquals(new Event.PlayerStuck(GAME, NOW, "bob", 19), events.get(2));
+    }
+
+    @Test
+    void aPlayerAtTheInnDoesNotCountAsHeldForTheWaiver() {
+        // alice only misses a turn at the inn, so bob is not the last free
+        // player: falling into the empty well traps him as usual
+        var state = stuckOn(running("alice", "bob"), "alice", 19)
+                .apply(new Event.TurnStarted(GAME, NOW, "bob"));
+        state = at(state, "bob", 29);
+
+        var events = engine.decide(state, new Command.RollDice(GAME, "bob"), dice(1, 1));
+        assertEquals(new Event.PlayerStuck(GAME, NOW, "bob", 31), events.get(2));
+    }
+
+    @Test
+    void aFreePlayerFallingIntoAnEmptyWellIsTrapped() {
+        var state = at(running("alice", "bob"), "alice", 29);
+
+        assertEquals(List.of(
+                new Event.DiceRolled(GAME, NOW, "alice", 1, 1),
+                new Event.PlayerMoved(GAME, NOW, "alice", 29, 31, MoveReason.NORMAL),
+                new Event.PlayerStuck(GAME, NOW, "alice", 31),
+                new Event.TurnStarted(GAME, NOW, "bob")),
+                engine.decide(state, new Command.RollDice(GAME, "alice"), dice(1, 1)));
+    }
+
     @Test
     void fullScriptedGameEndsWithAWinner() {
         var state = running("alice", "bob");

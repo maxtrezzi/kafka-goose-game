@@ -100,6 +100,15 @@ class BoardTest {
     }
 
     @Test
+    void theEdgesOfTheValidRangeAreAccepted() {
+        assertEquals(List.of(new Move(0, 1, MoveReason.NORMAL)), Board.resolve(0, 1));
+        assertEquals(List.of(new Move(0, 12, MoveReason.NORMAL)), Board.resolve(0, 12));
+        assertEquals(List.of(
+                new Move(63, 63, MoveReason.NORMAL),
+                new Move(63, 62, MoveReason.BOUNCE)), Board.resolve(63, 1));
+    }
+
+    @Test
     void trapClassification() {
         assertTrue(Board.traps(Board.INN));
         assertTrue(Board.traps(Board.WELL));

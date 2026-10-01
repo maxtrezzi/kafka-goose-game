@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BoardRendererTest {
@@ -121,6 +122,55 @@ class BoardRendererTest {
         assertTrue(raw.contains("\u001B["), "expected ANSI colors in raw output");
         String stripped = ANSI.matcher(raw).replaceAll("");
         assertTrue(stripped.indexOf('\u001B') < 0, "no stray escapes after stripping");
+    }
+
+    // --- Found by mutation testing: layout and colours that no test pinned ---
+
+    @Test
+    void everyRowHasNineCellsOfTheSameWidth() {
+        var view = startedGame()
+                .apply(new Event.PlayerMoved(GAME, NOW, "alice", 0, 5, MoveReason.NORMAL))
+                .apply(new Event.PlayerMoved(GAME, NOW, "bob", 0, 5, MoveReason.NORMAL));
+        String[] lines = plain(view).split("\n");
+        for (int row = 0; row < 7; row++) {
+            String line = lines[row];
+            assertEquals(9, Pattern.compile("\\d+").matcher(line).results().count(), line);
+            // tokens use the cell's free columns: the row keeps its width
+            assertEquals(9 * 8, line.length(), "row " + row + ": '" + line + "'");
+        }
+    }
+
+    @Test
+    void anEmptyLobbySaysSo() {
+        assertTrue(plain(GameView.initial(GAME)).contains("nobody has joined yet"));
+        assertFalse(plain(startedGame()).contains("nobody has joined yet"));
+    }
+
+    @Test
+    void onlyThePlayerToMoveIsMarked() {
+        String text = plain(startedGame());
+        assertEquals(1, text.split("<- to move", -1).length - 1, text);
+        assertFalse(text.contains("bob @0  <- to move"), text);
+    }
+
+    @Test
+    void eachPlayerHasTheirOwnColour() {
+        var view = startedGame()
+                .apply(new Event.PlayerMoved(GAME, NOW, "alice", 0, 5, MoveReason.NORMAL));
+        String raw = BoardRenderer.render(view);
+        // in join order: alice red, bob green — on the board (bold) and in the status block
+        assertTrue(raw.contains("\u001B[31m" + "\u001B[1m" + "A"), "alice's token is red, in bold");
+        assertTrue(raw.contains("\u001B[31m" + "A" + "\u001B[0m alice"), "alice's status line is red");
+        assertTrue(raw.contains("\u001B[32m" + "B" + "\u001B[0m bob"), "bob's status line is green");
+    }
+
+    @Test
+    void specialSquaresAreColouredByKind() {
+        String raw = BoardRenderer.render(GameView.initial(GAME));
+        assertTrue(raw.contains("\u001B[31m" + "19I"), "traps are red");
+        assertTrue(raw.contains("\u001B[36m" + " 6>"), "jumps are cyan");
+        assertTrue(raw.contains("\u001B[32m" + " 5*"), "geese are green");
+        assertTrue(raw.contains("\u001B[2m" + " 1 "), "plain squares are dim");
     }
 
     private static GameView startedGame() {

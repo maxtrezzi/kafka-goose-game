@@ -14,6 +14,12 @@
   <name>Goose Game :: Server</name>
   <description>Authoritative game host: consumes commands, produces events</description>
 
+  <properties>
+    <!-- The server is tested only end-to-end, against Kafka in Docker:
+         mutation testing would rerun that test for every mutant. -->
+    <pitest.skip>true</pitest.skip>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>com.goosegame</groupId>

@@ -64,7 +64,7 @@ pandoc "$combined" \
   --css=docs/pdf.css \
   --metadata title="kafka-goose-game" \
   --metadata subtitle="Implementation Documentation" \
-  --metadata date="July 2026" \
+  --metadata date="October 2026" \
   --metadata lang="en" \
   -o "$out"
 

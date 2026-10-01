@@ -1,5 +1,10 @@
 # kafka-goose-game
 
+[![CI](https://github.com/maxtrezzi/kafka-goose-game/actions/workflows/ci.yml/badge.svg)](https://github.com/maxtrezzi/kafka-goose-game/actions/workflows/ci.yml)
+![Java 21](https://img.shields.io/badge/Java-21-informational)
+![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3%20KRaft-informational)
+[![License: MIT](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
+
 A multiplayer **Game of the Goose** (Gioco dell'Oca) built on plain **Java 21**
 and **Apache Kafka**, with no frameworks. It is a test bed for what is current
 in both: **Kafka 4.x** without ZooKeeper, driven through the raw client APIs
@@ -16,6 +21,39 @@ state, on the server and in each client alike, is a
 [fold](docs/11-glossary.md#fold) over the log of those facts: the events applied
 one by one, in order. Kill any process and restart it, and it rebuilds itself by
 reading the topic again.
+
+![The terminal client at the end of a game: the 63-square board, the two players, and the last events](docs/images/tui-board.png)
+
+*The terminal client at the end of a real game against a Kafka broker: alice has
+landed on 63, bob is still stuck in the well.*
+
+## Highlights
+
+- **The log is the only state.** The server and every client rebuild what they
+  know by replaying `game.events`. Kill any process, start it again, and it
+  comes back to exactly where it was — no database, no snapshot.
+- **At-least-once, in the right order.** The server confirms that its events
+  are written (`acks=all`, idempotent producer) *before* it commits the
+  command's offset. The one case where a repeated command still has an effect
+  is named in the [documentation](docs/01-architecture.md#delivery-guarantees-at-least-once-with-the-limits-stated),
+  not left for someone to find.
+- **Java 21 as the structure of the code.** `Command` and `Event` are sealed
+  interfaces of records, and every fold is an exhaustive `switch`: a new event
+  type does not compile until every fold handles it. Each consumer loop runs
+  on its own virtual thread.
+- **Pure rules, tested without Kafka.** `GameEngine.decide(state, command, dice)`
+  returns events and has no side effects; dice and clock are injected. The same
+  seam drives a fully deterministic end-to-end game against a real broker in
+  Testcontainers.
+- **Found by playing, not by unit tests.** The first live game froze with both
+  players trapped (well + prison), which led to a rule change
+  ([ISSUES.md #7](ISSUES.md#7-the-documented-wellprison-deadlock-happened-in-the-first-live-game-step-7));
+  a broker-failure test turned out to test nothing and was redesigned
+  ([#8](ISSUES.md#8-the-broker-kill-test-raced-the-game-and-lost-step-8)).
+- **Fault tolerance shown, not claimed.** Three KRaft brokers, three copies of
+  every partition, `min.insync.replicas=2`: a whole game played with one broker
+  down. CI runs the unit tests, the integration tests, the Docker demo and a
+  check of the documentation on every push.
 
 ## Architecture
 
@@ -59,10 +97,30 @@ The board has 63 squares:
 
 ## Quickstart
 
-Prerequisites: Java 21, Maven, Docker with the compose plugin.
+Prerequisite: Docker with the compose plugin.
 
 ```bash
-# 1. Start the 3-broker KRaft cluster (creates the topics, then init-topics exits)
+# 1. The 3-broker KRaft cluster, the topics, and the server (built from source)
+docker compose --profile game up -d --build
+
+# 2. Two players, in two terminals
+docker compose run --rm tui game-1 alice
+docker compose run --rm tui game-1 bob
+```
+
+Then, in the clients: both type `join`, one types `start`, and take turns
+typing `roll` until someone lands on 63. `quit` and relaunch a client mid-game:
+it repaints the exact board state by replaying `game.events` from the beginning.
+`docker compose --profile game down` stops everything and throws the cluster
+away.
+
+### Without Docker for the application
+
+To work on the code, run the cluster in Docker and the server and clients from
+Maven. This needs Java 21 and Maven as well.
+
+```bash
+# 1. Start the cluster only (creates the topics, then init-topics exits)
 docker compose up -d
 
 # 2. Build everything once (installs the sibling modules for exec:java)
@@ -76,9 +134,9 @@ mvn -pl client-tui exec:java -Dexec.args="localhost:9092 game-1 alice"
 mvn -pl client-tui exec:java -Dexec.args="localhost:9092 game-1 bob"
 ```
 
-Then, in the clients: both type `join`, one types `start`, and take turns
-typing `roll` until someone lands on 63. `quit` and relaunch a client mid-game:
-it repaints the exact board state by replaying `game.events` from the beginning.
+Do not mix the two ways: the containerized server and a server started from
+Maven would share the consumer group and split the games between them, which
+the single-server design does not support.
 
 ### TUI commands
 
@@ -86,20 +144,21 @@ it repaints the exact board state by replaying `game.events` from the beginning.
 |---------------|--------|
 | `join [name]` | join the game (defaults to your player name; also switches your identity) |
 | `start`       | start the game (2–6 players, from the lobby) |
-| `roll`        | roll the dice on your turn (a roll out of turn is simply ignored by the server) |
+| `roll`        | roll the dice on your turn (out of turn, the client warns you and the server ignores the roll) |
 | `board`       | reprint the board |
 | `help`        | command list |
 | `quit`        | leave — the game goes on; rejoin to catch up by replay |
 
 Client args: `[bootstrap [gameId [player]]]`, defaulting to
 `localhost:9092 game-1 <os-user>`. Run several games at once by picking
-different `gameId`s.
+different `gameId`s. In Docker the bootstrap address is fixed, and the
+arguments are `[gameId [player]]`.
 
 ## Build & test
 
 ```bash
 mvn test        # unit tests only — no Docker needed
-mvn verify      # + the Testcontainers E2E (spins up a throwaway Kafka container)
+mvn verify      # + the integration tests (each starts a throwaway Kafka container)
 ```
 
 Building one module on its own needs an extra flag: `mvn -pl engine -am test`.
@@ -113,97 +172,29 @@ What each module's tests cover:
 - `engine` — every rule on the board, plus complete games played with a fixed
   list of dice rolls.
 - `server` — one end-to-end test that gives the same result every time, using
-  scripted dice against a real Kafka running in a container.
-- `client-core` — the fold that turns events into the view.
+  scripted dice against a real Kafka running in a container. It also checks,
+  after every event, that the client's fold and the server's fold agree.
+- `client-core` — the fold that turns events into the view, and `GameClient`
+  against a real broker: replay, the filter by game, unreadable records, and
+  the commands it sends.
 - `client-tui` — the renderer, checked on its output with the colour codes
-  removed.
+  removed, and the hint the client shows before a command the server will
+  probably reject.
 
 ## Kafka experiments
 
-The cluster is sized for exactly these. All commands run from the repo root.
+Five things to try against the running cluster, each with the exact commands,
+in [docs/kafka-experiments.md](docs/kafka-experiments.md):
 
-### 1. Stop a broker in the middle of a game
-
-Both topics keep three copies of every partition, with
-[`min.insync.replicas=2`](docs/11-glossary.md#replication-factor-isr-and-minimum-in-sync-replicas).
-Any single broker can stop without losing a message and without stopping the
-game.
-
-```bash
-docker stop goose-kafka-2      # mid-game, while people are rolling
-# ... keep playing: joins, rolls, moves all still work ...
-docker start goose-kafka-2     # it catches back up and rejoins the ISR
-```
-
-Watch the ISR shrink and recover:
-
-```bash
-docker exec goose-kafka-1 /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:29092 --describe --topic game.events
-```
-
-While the broker is down, the partitions it was leading get a new leader and
-`Isr:` drops to two entries. After the restart it goes back to three. Stopping a
-*second* broker breaks the `min.insync.replicas=2` promise, and the producer's
-`acks=all` writes start to fail. That is not a defect: it is the durability
-guarantee doing exactly what it says.
-
-### 2. Watch the event log live
-
-The whole game is readable JSON on one topic:
-
-```bash
-docker exec goose-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
-  --bootstrap-server localhost:29092 --topic game.events \
-  --from-beginning --property print.key=true
-```
-
-Play a few turns and watch the `DiceRolled`, `PlayerMoved` and `PlayerStuck`
-facts appear, each keyed by its `gameId`. This is also the quickest way to
-settle an argument about what the rules did.
-
-### 3. Inspect consumer groups and offsets
-
-```bash
-docker exec goose-kafka-1 /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:29092 --list
-
-docker exec goose-kafka-1 /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:29092 --describe --group goose-server
-```
-
-You will see one lasting group, `goose-server`. Its `CURRENT-OFFSET` on
-`game.commands` moves forward only after the events that command produced have
-been safely written — that ordering is what makes the delivery
-[at-least-once](docs/11-glossary.md#delivery-semantics-at-most-once-at-least-once-exactly-once).
-
-You will also see one `goose-client-<uuid>` group per running client. Those
-never commit anything at all: a client always reads from `earliest` and keeps
-nothing of its own.
-
-### 4. Replay a finished game
-
-State is disposable everywhere; the log is the truth.
-
-- Restart the **server**. It logs how many events it read back and can carry on
-  with any unfinished game. Games that already ended are rebuilt too, `GameWon`
-  included.
-- Restart a **client** with an old `gameId`. The whole board comes back from the
-  log alone, winner line and all.
-- Or work through the log yourself, with the console consumer from experiment 2.
-  Every board any client ever displayed can be derived from that stream.
-
-### 5. Not done here: SASL/SCRAM and ACLs
-
-The cluster runs on PLAINTEXT on purpose, so that every experiment above works
-without setting up credentials first. Closing that gap is the obvious next
-step, and it is a small one. Add a `SASL_PLAINTEXT` listener using
-SCRAM-SHA-256, create the users
-`goose-server` and `goose-client` with `kafka-configs.sh`, then use
-`kafka-acls.sh` to give clients permission to *write* only to `game.commands`
-and to *read* only from `game.events`, with the opposite rights for the server.
-That puts the rule "clients ask, the server decides" into the brokers
-themselves, instead of trusting the code to respect it.
+1. [Stop a broker in the middle of a game](docs/kafka-experiments.md#1-stop-a-broker-in-the-middle-of-a-game)
+   and watch the in-sync replicas shrink and recover.
+2. [Watch the event log live](docs/kafka-experiments.md#2-watch-the-event-log-live)
+   with the console consumer.
+3. [Inspect consumer groups and offsets](docs/kafka-experiments.md#3-inspect-consumer-groups-and-offsets).
+4. [Replay a finished game](docs/kafka-experiments.md#4-replay-a-finished-game)
+   by restarting the server or a client.
+5. [What is not done here: SASL/SCRAM and ACLs](docs/kafka-experiments.md#5-not-done-here-saslscram-and-acls),
+   and how it would be added.
 
 ## Documentation
 
@@ -224,6 +215,17 @@ Project logs:
   project was built from
 - [DECISIONS.md](DECISIONS.md) — every non-obvious design call, with reasoning
 - [ISSUES.md](ISSUES.md) — every problem hit along the way and its actual fix
+
+## How this was built
+
+The project was built with an AI coding assistant (Claude Code) working as a
+pair. The architecture, the fixed constraints and the 8-step plan were written
+first ([chapter 10](docs/10-implementation-plan.md)). Each step was then
+implemented with the assistant and reviewed, and the author approved it before
+it was committed. Changes to the game itself, such as the new rule after the
+first live game froze ([ISSUES.md #7](ISSUES.md#7-the-documented-wellprison-deadlock-happened-in-the-first-live-game-step-7)),
+were the author's decision. The commits the assistant co-wrote carry a
+`Co-Authored-By` line.
 
 ## Future ideas
 

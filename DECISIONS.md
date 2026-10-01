@@ -64,7 +64,10 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
 - **At-least-once, not exactly-once**: `acks=all` + idempotent producer; offsets
   committed only after every produced event's future is confirmed (`flush()` +
   `get()` before `commitSync()`). A crash between produce and commit replays the
-  command — mostly rejected by the engine, but a redelivered `RollDice` rolls again.
+  command against a state that already holds its events, so the engine rejects it
+  (duplicate join, game already running, roll out of turn). The one exception: a
+  redelivered `RollDice` whose player also holds the next turn, because every
+  other player is stuck — that one rolls again.
   Exactly-once would need Kafka transactions; deliberately out of scope.
 - **Replay uses manual `assign` + `seekToBeginning`** (no consumer group, no
   commits): replay must always read everything, and group semantics would fight that.
@@ -74,6 +77,16 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   partition owner, so multiple instances would work per-game, but each instance's
   state for the *other* instances' games goes stale after replay. Harmless today;
   revisit before scaling past one instance.
+- **A game enters the state map only through an accepted command**
+  (`getOrDefault`, not `computeIfAbsent`, before `decide`). With
+  `computeIfAbsent`, every rejected command for an unknown `gameId` left an empty
+  game in the map until the next restart — a client could fill the server's
+  memory by sending `RollDice` for made-up games. Found in a later review.
+- **A failed produce stops the server** instead of being retried in the loop:
+  nothing is lost (the offsets were not committed, the state comes back from the
+  log), and a crash is easier to reason about than a loop that half-recovers. The
+  restart belongs to whatever supervises the process — `restart: unless-stopped`
+  in `docker-compose.yml`.
 - **E2E is deterministic by construction**: scripted dice injected through the same
   `DiceRoller` seam tests use; the driver reacts to each `GameStarted`/`TurnStarted`
   with exactly one `RollDice` — no sleeps, no state guessing. Server runs on a
@@ -85,10 +98,16 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   `GameState`: the implementation plan fixes `client-core → protocol` only (a
   client needs no game rules on its classpath). Deliberate duplication of fold
   semantics; the wire protocol — not a shared class — is the contract keeping
-  the two folds in agreement, and the shared protocol tests are what guard it.
-- **Fresh consumer group + `earliest` on every client start**, offsets never
-  committed: a client (re)started mid-game rebuilds its whole view by replay. The
-  Kafka log is the source of truth; the client keeps nothing.
+  the two folds in agreement. The compiler only guarantees that both handle every
+  event type, not that they handle it the same way, so the end-to-end test folds
+  the real game with both and compares them after every event (`client-core` is a
+  *test* dependency of `server` for that; the production rule is unchanged).
+- **No consumer group on the client**: manual `assign` of every partition +
+  `seekToBeginning` on every start, offsets never committed — the same setup as the
+  server's replay. A client (re)started mid-game rebuilds its whole view by replay;
+  the Kafka log is the source of truth and the client keeps nothing. (The first
+  version used `subscribe()` with a fresh `goose-client-<uuid>` group, only because
+  `subscribe()` requires one; it left an empty group on the brokers per client run.)
 - **Listener callbacks run on the client's event-loop virtual thread**, in log
   order; a listener exception is logged and skipped — a UI bug must not stop the
   event stream. UIs needing their own thread hand off themselves.
@@ -119,14 +138,31 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   the automated smoke test plays full games through the real stack.
 - **`join <name>` switches identity**: subsequent `start`/`roll` act as that player;
   default identity is the sanitized OS user name.
+- **The client explains likely rejections itself**: before `start` or `roll` it
+  checks its own view and prints a note when the player has not joined or it is
+  not their turn. Still only a hint — the command is sent anyway, and the server
+  decides. The protocol keeps no rejection event (see Engine above).
 
 ## Build / workflow
 
-- **Failsafe activated only in `server`** — `*IT` tests (need Docker) run at
-  `verify`, unit tests stay in `test`; `mvn test` never requires Docker.
-- **Generate → skill review → fix-all → re-review → approve → commit** loop per
-  plan step, with the `java-best-practices-modern` skill active for both
-  generation and review (saved to memory 2026-07-03).
+- **Failsafe activated only in `server` and `client-core`** — the modules that
+  have `*IT` tests (they need Docker) run them at `verify`; unit tests stay in
+  `test`; `mvn test` never requires Docker.
+- **One review loop per plan step**: implement, review against a Java
+  best-practice checklist, fix every finding, review again, then approve and
+  commit.
+- **Dependencies upgraded together, with one exception**: kafka-clients 4.3.1,
+  Jackson 2.22.3, JUnit 6.1.3, Testcontainers 2.0.5 (which removed the
+  `api.version` workaround of ISSUES.md #4). Surefire and failsafe stay on 3.5.3,
+  because failsafe 3.6.0 ignores `-DskipTests` (ISSUES.md #9).
+- **A Docker image per runnable module, from one multi-stage `Dockerfile`**: the
+  build stage packages each module with `dependency:copy-dependencies`, the run
+  stage is a plain JRE with a classpath — no fat jar and no extra plugin. The
+  server and the TUI sit behind compose *profiles*, so `docker compose up -d`
+  still means "the cluster only", and the Maven workflow keeps working.
+- **The CI runs the Docker demo for real**: the cluster, the server, two players
+  joining and starting a game, checked against the event log. It is the only
+  automated check of the Dockerfile, the compose wiring and the 3-broker setup.
 
 ## Docs / final verification (Step 8)
 

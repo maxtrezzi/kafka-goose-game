@@ -88,6 +88,15 @@ so a name or a keyword can quietly stop matching.
   If an `IllegalArgumentException` arrives, because someone typed an invalid
   name, it prints `invalid: …` and carries on: a mistake by the user deserves a
   new prompt, not a stack trace.
+- **A hint before a likely rejection**: the server refuses a command without
+  any answer (there is no rejection event), so before `start` and `roll` the
+  client looks at its own view and prints a `note:` when the player has not
+  joined or it is not their turn. The command is still sent: the hint can be
+  wrong for a moment (the join may still be on its way), and the server's
+  decision is the only one that counts. The reason fits the command: `start`
+  in a running game says the game has already started, `roll` out of turn
+  says whose turn it is not. The check is a small pure function,
+  `likelyRejection`, so it is unit-tested like the renderer.
 - **What triggers a redraw**: the `GameListener` callback, running on the
   client's event-loop thread, clears the screen and prints it again on every
   update. Both threads write to `System.out`, so now and then the prompt
@@ -131,9 +140,10 @@ the first game played for real.
   shell](11-glossary.md#functional-core-imperative-shell), on a small scale** —
   the same split as engine and server, one layer higher: `BoardRenderer` is
   pure, `Main` is not.
-- **Humble object** — `Main` is deliberately too thin to be worth testing, and
-  all the logic that could actually be wrong sits in the renderer, which is
-  easy to test.
+- **Humble object** — `Main` is deliberately thin: apart from one small pure
+  function (`likelyRejection`, tested on its own), everything in it is input
+  and output, and all the logic that could actually be wrong sits in the
+  renderer, which is easy to test.
 - **Rendering that must cover every case** — the sealed interface forces the UI
   to keep pace with the protocol, and the compiler checks it.
 
@@ -158,6 +168,7 @@ the first game played for real.
 - Kafka's log level is lowered before anything is printed.
 - Rolling out of turn is safe, which makes scripted clients possible.
 - `join` changes which player the next commands act as.
+- The client warns about a likely rejection, but still sends the command.
 
 ## Issues (from ISSUES.md)
 

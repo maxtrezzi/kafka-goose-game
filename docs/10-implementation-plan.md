@@ -6,7 +6,11 @@ A multiplayer Game of the Goose (Gioco dell'Oca), built as a test bed for
 Kafka 4.x and Java 21.
 
 This chapter is the plan the project was actually built from, kept as it was
-written. It is a working document, so it is written as short checklists rather
+written. It was written for working with an AI coding assistant (Claude Code):
+the "How to use this file" paragraph below is the instruction the assistant
+followed, one step per session, with the author approving each step before it
+was committed. The library versions listed are the ones chosen at the start;
+the current ones are in [chapter 7](07-infrastructure-and-build.md). It is a working document, so it is written as short checklists rather
 than as prose: each step lists what to create and how to check it. The other
 chapters explain the reasoning; this one records the order of the work.
 

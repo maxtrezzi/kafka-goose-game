@@ -141,11 +141,14 @@ The weakness that comes with that choice is written down rather than hidden:
   event is confirmed (`flush()` then `Future.get()` before `commitSync()`).
 
 So if the server crashes after writing events but before committing offsets,
-it reads those commands again on restart. For most commands this changes
-nothing: the engine simply rejects them a second time, and a repeated
-`JoinGame` for a player who already joined produces no events. A repeated
-`RollDice` is different — it **rolls again**, because the dice are random and
-the same state can give a different result.
+it reads those commands again on restart. By then the replay has already
+folded the events those commands produced, so in almost every case the engine
+rejects the repeat: a repeated `JoinGame` finds the player already in the
+lobby, a repeated `StartGame` finds the game running, and a repeated
+`RollDice` finds that the turn has already passed to the next player. The gap
+is one case: a `RollDice` whose player *also* holds the next turn, because
+every other player is stuck (at the inn, in the well or in the prison). That
+repeat is accepted and **rolls again**, because the dice are random.
 
 Real exactly-once processing would need Kafka transactions, so that producing
 events and committing offsets happen as one atomic step. That was left out on
@@ -158,16 +161,17 @@ Clients need no delivery guarantees at all: they never commit offsets, they
 replay from the beginning on every start, and folding is idempotent from a
 fixed starting state.
 
-## Replay: three consumers, three offset strategies
+## Replay: three consumers, two offset strategies
 
-The same topic is read three different ways, which together cover most of
-Kafka's consumer-offset design space:
+There are three consumers, and only one of them has a position worth keeping.
+The two that replay `game.events` use no consumer group at all; the one that
+works through `game.commands` uses a group and commits by hand:
 
 | Consumer | Group | Offsets | Why |
 |---|---|---|---|
 | Server replay (startup) | none — manual `assign` + `seekToBeginning` | never committed | Replay must *always* read everything, and a consumer group works against that: it would remember a position and reassign partitions |
 | Server command loop | durable group `goose-server` | committed manually after produce-confirm | The one consumer whose position *is* meaningful state |
-| Every client | a new group per run, `goose-client-<uuid>`, with `auto.offset.reset=earliest` | never committed | Every client start reads the whole history; the group exists only because `subscribe()` requires one |
+| Every client | none — manual `assign` + `seekToBeginning`, like the server replay | never committed | Every client start reads the whole history, and nothing is stored on the brokers for a client |
 
 ## Failure containment
 

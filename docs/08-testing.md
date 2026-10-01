@@ -3,8 +3,8 @@
 [← Infrastructure & build](07-infrastructure-and-build.md) · [Patterns catalog →](09-patterns-and-antipatterns.md)
 
 The tests follow the shape of the architecture: the purer a layer is, the more
-tests it gets and the cheaper those tests are. There are 105 tests in total and
-no mocking framework anywhere. Every place a test needs to substitute something
+tests it gets and the cheaper those tests are. There are 110 tests in total —
+107 unit tests and 3 integration tests — and no mocking framework anywhere. Every place a test needs to substitute something
 — `DiceRoller`, `Clock`, `GameListener` — is a small interface, so the test can
 implement it in one line. See [seam](11-glossary.md#seam).
 
@@ -12,9 +12,9 @@ implement it in one line. See [seam](11-glossary.md#seam).
 |---|---|---|---|
 | protocol | 46 | unit | Round-trip of every message type; rejection of malformed / unknown-type / oversized / non-string-timestamp payloads; unknown-*field* tolerance; tombstone nulls; validation rules incl. duplicates |
 | engine | 39 | unit | Every board rule; every rejection; trap/free/turn flow; the deadlock amendment; full scripted games with fixed dice |
-| server | 1 | E2E (Testcontainers) | The entire stack against a real broker |
-| client-core | 10 | unit | The view fold over scripted event sequences (replay logic) |
-| client-tui | 9 | unit | Board layout, markers, pieces, status block, winner line, the sentence written for each event, correct handling of the ANSI codes, and the cell that holds too many players |
+| server | 1 | E2E (Testcontainers) | The entire stack against a real broker, and the client's fold agreeing with the server's after every event |
+| client-core | 10 + 2 | unit + integration (Testcontainers) | The view fold over scripted event sequences; `GameClient` against a real broker: replay on start, the filter by game, unreadable records skipped, commands keyed by game |
+| client-tui | 12 | unit | Board layout, markers, pieces, status block, winner line, the sentence written for each event, correct handling of the ANSI codes, the cell that holds too many players, and the hint shown before a likely rejection |
 
 ## Why most of the tests are unit tests
 
@@ -31,14 +31,19 @@ is why it falls out that way:
   committing offsets, and shutdown. None of it means anything except against a
   real broker. Unit-testing it would mean replacing `KafkaConsumer` with a
   fake, and that tests the fake, not the agreement with Kafka.
-- **`mvn test` never needs Docker.** The end-to-end test is an `*IT` class run
-  by failsafe during `verify` ([chapter
+- **The client gets two integration tests, and no server.** `GameClientIT`
+  writes the events itself, standing in for the server, and reads the
+  commands the client sends. That keeps the test about what `client-core`
+  promises — replay, filtering, skipping bad records, sending — and not about
+  the game rules, which are tested below.
+- **`mvn test` never needs Docker.** The integration tests are `*IT` classes
+  run by failsafe during `verify` ([chapter
   7](07-infrastructure-and-build.md)), so the logic gives feedback in seconds
   and the full proof is one command away.
 
 ## The deterministic E2E
 
-`GooseServerIT` starts a temporary `apache/kafka:4.3.0` container with
+`GooseServerIT` starts a temporary `apache/kafka:4.3.1` container with
 [Testcontainers](11-glossary.md#testcontainers) and creates the topics through
 the Admin API. It then runs the real `GooseServer.run()` on a [virtual
 thread](11-glossary.md#virtual-thread) and plays a two-player game *entirely
@@ -59,7 +64,7 @@ Getting the same result every time is designed in, not hoped for:
   step. There is a 90-second deadline, but only to stop a hung test, and its
   failure message prints the events collected so far.
 
-The checks cover three things:
+The checks cover four things:
 
 1. **The opening sequence.** After the joins and the start, whole events are
    compared for equality.
@@ -68,6 +73,13 @@ The checks cover three things:
 3. **The point of event sourcing itself.** Folding the observed history gives
    the expected final state: `{alice=63, bob=21}`, phase FINISHED, winner
    alice.
+4. **The two folds agree.** The same history is folded with the engine's
+   `GameState` and with the client's `GameView`, and after *every* event the
+   phase, players, positions, trapped players, current player and winner must
+   be equal. The two folds are written twice on purpose
+   ([chapter 5](05-client-core.md)); the compiler makes sure both handle every
+   event type, and this check makes sure they handle it the same way. For it,
+   `server` has `client-core` as a *test* dependency only.
 
 Last, the test checks a clean shutdown. `close()` returns, and the server
 thread really does stop.
@@ -136,8 +148,11 @@ nothing at all — without saying so.
 
 ## Issues (from ISSUES.md)
 
-**#4** — Testcontainers against Docker daemon 29, fixed with the `api.version`
-system property in failsafe.
+**#4** — Testcontainers against Docker daemon 29, first fixed with the
+`api.version` system property in failsafe, later by upgrading Testcontainers.
+
+**#9** — failsafe 3.6.0 ran the integration tests even with `-DskipTests`;
+found by running the README's build command after the upgrade.
 
 **#7** — the deadlock, found by playing the game for real.
 

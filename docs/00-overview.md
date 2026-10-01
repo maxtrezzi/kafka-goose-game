@@ -116,9 +116,9 @@ never revisited:
 
 | Constraint | Value | Motivation |
 |---|---|---|
-| Language / stack | Plain Java 21 + `kafka-clients` 4.3.0 | Every Kafka decision stays explicit instead of being made by a framework |
+| Language / stack | Plain Java 21 + `kafka-clients` 4.3 | Every Kafka decision stays explicit instead of being made by a framework |
 | Serialization | JSON via Jackson, hand-written `Serde` | A log that can be read straight off the topic; no Schema Registry to operate |
 | Cluster | 3 KRaft brokers, topics RF=3, `min.insync.replicas=2` | Enough replication to *demonstrate* broker-loss survival, small enough for a laptop |
 | Architecture | Event-sourced, server-authoritative, topics keyed by `gameId` | The design under test: everything else follows from it |
 | UI | Terminal first, `client-core` kept UI-agnostic | A future web/desktop UI must be able to reuse the client layer unchanged |
-| Tests | JUnit 5 everywhere; Testcontainers for the E2E | `mvn test` must never require Docker; `mvn verify` proves the real stack |
+| Tests | JUnit everywhere; Testcontainers for the integration tests | `mvn test` must never require Docker; `mvn verify` proves the real stack |

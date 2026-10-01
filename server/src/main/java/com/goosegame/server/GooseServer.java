@@ -57,12 +57,18 @@ import java.util.random.RandomGenerator;
  * <p><b>Delivery:</b> the producer is idempotent with {@code acks=all}; offsets
  * are committed only after every produced event is acknowledged, giving
  * at-least-once processing — a crash between produce and commit replays the
- * command, which the (deterministic-per-state) engine mostly rejects, but a
- * redelivered {@code RollDice} rolls again. Exactly-once would need Kafka
- * transactions; deliberately out of scope for this project.
+ * command against a state that already contains its events, so the engine
+ * rejects it (duplicate join, game already started, roll out of turn). The one
+ * exception is a {@code RollDice} whose player also holds the next turn,
+ * because every other player is stuck: that redelivery rolls again.
+ * Exactly-once would need Kafka transactions; deliberately out of scope for
+ * this project.
  *
  * <p>Poison pills (malformed commands or events) are logged and skipped by
- * seeking past them, never crashing the loop.
+ * seeking past them, never crashing the loop. A failed <em>produce</em> is the
+ * opposite case: it ends {@code run()} with an exception and the process stops.
+ * Nothing is lost — the commands were not committed and the state is rebuilt
+ * from the log — but the restart is left to whatever supervises the process.
  */
 public final class GooseServer implements AutoCloseable {
 
@@ -208,7 +214,10 @@ public final class GooseServer implements AutoCloseable {
         if (command == null) {
             return; // tombstone — nothing to decide
         }
-        GameState state = states.computeIfAbsent(command.gameId(), GameState::newGame);
+        // Not computeIfAbsent: a rejected command for an unknown gameId must not
+        // leave an empty game in the map. A game is stored only by applyEvent,
+        // so only once a command for it has been accepted.
+        GameState state = states.getOrDefault(command.gameId(), GameState.newGame(command.gameId()));
         List<Event> events = engine.decide(state, command, dice);
         if (events.isEmpty()) {
             log.info("rejected {}", command);

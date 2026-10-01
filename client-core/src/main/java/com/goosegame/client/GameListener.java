@@ -10,7 +10,10 @@ import com.goosegame.protocol.Event;
  */
 public interface GameListener {
 
-    /** One event of this game, before it is folded into the view. */
+    /**
+     * One event of this game. It has already been folded into the view; the
+     * matching {@link #onViewUpdated} call follows straight after.
+     */
     void onEvent(Event event);
 
     /** The view after folding that event — what a UI should now display. */

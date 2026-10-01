@@ -3,18 +3,18 @@
 [← Infrastructure & build](07-infrastructure-and-build.md) · [Patterns catalog →](09-patterns-and-antipatterns.md)
 
 The tests follow the shape of the architecture: the purer a layer is, the more
-tests it gets and the cheaper those tests are. There are 110 tests in total —
-107 unit tests and 3 integration tests — and no mocking framework anywhere. Every place a test needs to substitute something
+tests it gets and the cheaper those tests are. There are 126 tests in total —
+123 unit tests and 3 integration tests — and no mocking framework anywhere. Every place a test needs to substitute something
 — `DiceRoller`, `Clock`, `GameListener` — is a small interface, so the test can
 implement it in one line. See [seam](11-glossary.md#seam).
 
 | Module | Tests | Kind | What they prove |
 |---|---|---|---|
-| protocol | 46 | unit | Round-trip of every message type; rejection of malformed / unknown-type / oversized / non-string-timestamp payloads; unknown-*field* tolerance; tombstone nulls; validation rules incl. duplicates |
-| engine | 39 | unit | Every board rule; every rejection; trap/free/turn flow; the deadlock amendment; full scripted games with fixed dice |
+| protocol | 49 | unit | Round-trip of every message type; rejection of malformed / unknown-type / oversized / non-string-timestamp payloads; unknown-*field* tolerance; tombstone nulls; validation rules incl. duplicates |
+| engine | 47 | unit | Every board rule; every rejection; trap/free/turn flow, including the trap edge cases found by mutation testing; the deadlock amendment; full scripted games with fixed dice |
 | server | 1 | E2E (Testcontainers) | The entire stack against a real broker, and the client's fold agreeing with the server's after every event |
 | client-core | 10 + 2 | unit + integration (Testcontainers) | The view fold over scripted event sequences; `GameClient` against a real broker: replay on start, the filter by game, unreadable records skipped, commands keyed by game |
-| client-tui | 12 | unit | Board layout, markers, pieces, status block, winner line, the sentence written for each event, correct handling of the ANSI codes, the cell that holds too many players, and the hint shown before a likely rejection |
+| client-tui | 17 | unit | Board layout and row width, markers and their colours, player colours, pieces, status block, winner line, the sentence written for each event, correct handling of the ANSI codes, the cell that holds too many players, and the hint shown before a likely rejection |
 
 ## Why most of the tests are unit tests
 
@@ -113,6 +113,70 @@ left to do. The fix was to make the fault a **starting condition** instead of an
 interruption: stop the broker first, then play the whole game. A fault injected
 on a timer, against a workload that finishes quickly, can end up testing
 nothing at all — without saying so.
+
+## Mutation testing: are the tests checking anything?
+
+Line coverage says which code the tests *ran*; it does not say whether they
+would notice if that code were wrong. [Mutation
+testing](11-glossary.md#mutation-testing) answers that second question. PIT
+makes many small changes to the compiled code — a `<` becomes `<=`, a condition
+becomes always true, a return value becomes empty — and runs the tests against
+each changed version, called a *mutant*. A mutant that makes a test fail is
+*killed*; one that passes every test has *survived*, and points at behaviour no
+test pins down.
+
+It runs on demand, not in CI, through a Maven profile:
+
+```bash
+mvn -Pmutation test     # reports in <module>/target/pit-reports/index.html
+```
+
+It covers the four modules with unit tests: `protocol`, `engine`, `client-core`
+and `client-tui`, with PIT's `STRONGER` set of mutators. Code that only the
+integration tests reach is left out, because PIT would run a Docker-based test
+for every mutant: the whole `server` module, `GameClient`, and the console
+input and output in the TUI's `Main` (its one pure function,
+`likelyRejection`, is included). The whole run takes about a minute.
+
+| Module | Mutants | Killed at first run | Killed now |
+|---|---|---|---|
+| protocol | 52 | 46 (88%) | 52 (100%) |
+| engine | 137 | 119 (87%) | 128 (93%) |
+| client-core | 16 | 16 (100%) | 16 (100%) |
+| client-tui | 64 | 55 (86%) | 63 (98%) |
+
+("Killed" includes the mutants that made a test run until it timed out: a
+mutant that turns a loop into an endless one has been detected too.)
+
+What the first run found was more useful than the percentages:
+
+- **Two tests passed for the wrong reason.** The test that an empty player list
+  is refused also passed without the emptiness check, because an empty list
+  fails the "first player is among the players" check as well. The test for
+  the 10 KiB size limit sent 10 KiB of blanks, which the JSON parser refuses
+  anyway. Both now check the reason, and the size test sends *valid* JSON that
+  only the size limit can refuse.
+- **Rules in DECISIONS.md that no test pinned down.** A player at the inn does
+  not count as held for the "last free player" rule; landing in the well does
+  not free the player in the prison; the inn is not a swap; with two players,
+  the swap in the well is not waived. Each now has a test.
+- **The renderer's layout and colours.** No test noticed if a row got a tenth
+  cell, if a token made its cell wider, or if every colour disappeared.
+
+The 10 mutants that still survive were each looked at, and none can be killed
+by a test of reachable behaviour:
+
+- 5 in `GameEngine.advanceTurn`, on the path for a game where every player is
+  trapped. Since the last free player is never trapped, `decide` cannot reach
+  it; it stays as a defence for logs written before that rule.
+- 2 in `Board.move`, on the clamp at square 0, which no roll can reach on the
+  classic board.
+- 3 *equivalent* mutants, which change the code but not what it does: the
+  phase check in `rollDice` (outside a running game there is no current player,
+  so the next check refuses the roll anyway), the "not the roller" condition
+  when a swap frees the occupant (the roller is never trapped), and the
+  renderer's check for an empty event list (without it, it writes an invisible
+  pair of colour codes).
 
 ## Testing patterns applied
 

@@ -112,6 +112,10 @@ The parent does three jobs:
    3.6.4, dependency 3.11.0 — pinned so builds don't drift with Maven
    defaults. Surefire and failsafe are held at 3.5.3 on purpose: failsafe
    3.6.0 runs the integration tests even with `-DskipTests` (ISSUES.md #9).
+   PIT 1.30.0, with its JUnit 5 plugin 1.2.3, is configured here too, but
+   bound to a goal only inside the `mutation` profile, so a normal build never
+   runs it ([chapter 8](08-testing.md#mutation-testing-are-the-tests-checking-anything)).
+   The `server` module turns it off with the `pitest.skip` property.
 
 Module-level choices:
 

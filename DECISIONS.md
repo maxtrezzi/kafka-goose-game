@@ -155,6 +155,14 @@ made *inside* those boundaries. Newest entries at the bottom of each section.
   Jackson 2.22.3, JUnit 6.1.3, Testcontainers 2.0.5 (which removed the
   `api.version` workaround of ISSUES.md #4). Surefire and failsafe stay on 3.5.3,
   because failsafe 3.6.0 ignores `-DskipTests` (ISSUES.md #9).
+- **Mutation testing with PIT, on demand only** (`mvn -Pmutation test`): run
+  locally, not in CI, by choice. It covers the modules with unit tests
+  (`protocol`, `engine`, `client-core`, `client-tui`) with the `STRONGER`
+  mutators, and leaves out the code only the Docker-based tests reach (`server`,
+  `GameClient`, the console I/O in `Main`), because PIT would rerun those slow
+  tests for every mutant. Surviving mutants are either killed with a test of the
+  real rule or explained as equivalent or unreachable in chapter 8 — never
+  hidden by excluding them from the run.
 - **A Docker image per runnable module, from one multi-stage `Dockerfile`**: the
   build stage packages each module with `dependency:copy-dependencies`, the run
   stage is a plain JRE with a classpath — no fat jar and no extra plugin. The

@@ -39,6 +39,17 @@
   <build>
     <plugins>
       <plugin>
+        <!-- GameClient is only tested by GameClientIT, against Kafka in Docker,
+             which mutation testing does not run. -->
+        <groupId>org.pitest</groupId>
+        <artifactId>pitest-maven</artifactId>
+        <configuration>
+          <excludedClasses>
+            <param>com.goosegame.client.GameClient</param>
+          </excludedClasses>
+        </configuration>
+      </plugin>
+      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
         <executions>

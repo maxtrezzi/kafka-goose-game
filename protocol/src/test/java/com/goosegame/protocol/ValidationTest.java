@@ -11,6 +11,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Compact-constructor validation of every Command and Event record. */
 class ValidationTest {
@@ -73,14 +74,28 @@ class ValidationTest {
 
     @Test
     void gameStartedValidatesThePlayerList() {
-        assertThrows(IllegalArgumentException.class, // empty
+        // empty: checked on the message, because an empty list would also fail
+        // the "firstPlayer is among the players" check (found by mutation testing)
+        var empty = assertThrows(IllegalArgumentException.class,
                 () -> new Event.GameStarted("game-1", NOW, List.of(), "alice"));
+        assertTrue(empty.getMessage().contains("must not be empty"), empty.getMessage());
+        var nullList = assertThrows(IllegalArgumentException.class,
+                () -> new Event.GameStarted("game-1", NOW, null, "alice"));
+        assertTrue(nullList.getMessage().contains("players"), nullList.getMessage());
         assertThrows(IllegalArgumentException.class, // duplicate names
                 () -> new Event.GameStarted("game-1", NOW, List.of("alice", "alice"), "alice"));
         assertThrows(IllegalArgumentException.class, // firstPlayer not in list
                 () -> new Event.GameStarted("game-1", NOW, List.of("alice", "bob"), "carol"));
         assertThrows(IllegalArgumentException.class, // invalid name inside the list
                 () -> new Event.GameStarted("game-1", NOW, List.of("alice", "b b"), "alice"));
+    }
+
+    @Test
+    void squaresAreKeptAsGiven() {
+        var move = new Event.PlayerMoved("game-1", NOW, "alice", 5, 9, MoveReason.GOOSE);
+        assertEquals(5, move.from());
+        assertEquals(9, move.to());
+        assertEquals(52, new Event.PlayerStuck("game-1", NOW, "alice", 52).square());
     }
 
     @Test

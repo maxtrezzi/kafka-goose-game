@@ -93,8 +93,10 @@ class JsonSerdeTest {
     void nonStringTimestampIsRejected() {
         var json = """
                 {"type":"PlayerFreed","gameId":"game-1","timestamp":{},"player":"alice"}""";
-        assertThrows(DeserializationException.class,
+        var e = assertThrows(DeserializationException.class,
                 () -> eventSerde.deserialize(TOPIC, json.getBytes(StandardCharsets.UTF_8)));
+        // the explicit check, not a NullPointerException from Instant.parse(null)
+        assertTrue(e.getMessage().contains("ISO-8601"), e.getMessage());
     }
 
     @Test
@@ -141,6 +143,24 @@ class JsonSerdeTest {
         byte[] huge = new byte[JsonSerde.MAX_PAYLOAD_BYTES + 1];
         Arrays.fill(huge, (byte) ' ');
         assertThrows(DeserializationException.class, () -> eventSerde.deserialize(TOPIC, huge));
+    }
+
+    @Test
+    void oversizedButValidPayloadIsStillRejected() {
+        // Valid JSON that would parse fine — unknown fields are tolerated — so
+        // only the size check can reject it. Blank padding alone does not prove
+        // that: the parser would reject an all-blank payload anyway.
+        String json = """
+                {"type":"JoinGame","gameId":"game-1","player":"alice","padding":"%s"}"""
+                .formatted("x".repeat(JsonSerde.MAX_PAYLOAD_BYTES));
+        var e = assertThrows(DeserializationException.class,
+                () -> commandSerde.deserialize(TOPIC, json.getBytes(StandardCharsets.UTF_8)));
+        assertTrue(e.getMessage().contains("exceeds"), e.getMessage());
+    }
+
+    @Test
+    void aSerdeNeedsATargetType() {
+        assertThrows(IllegalArgumentException.class, () -> new JsonSerde<>(null));
     }
 
     @Test

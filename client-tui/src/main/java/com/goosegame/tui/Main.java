@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -89,8 +90,14 @@ public final class Main {
                     client.join(name);
                     me.set(name); // from now on, start/roll act as this player
                 }
-                case "start" -> client.start(me.get());
-                case "roll" -> client.roll(me.get());
+                case "start" -> {
+                    likelyRejection("start", client.view(), me.get()).ifPresent(out::println);
+                    client.start(me.get());
+                }
+                case "roll" -> {
+                    likelyRejection("roll", client.view(), me.get()).ifPresent(out::println);
+                    client.roll(me.get());
+                }
                 case "board", "" -> out.print(CLEAR_SCREEN + BoardRenderer.render(client.view()) + "\n");
                 case "help" -> out.print(HELP);
                 case "quit", "exit" -> {
@@ -103,6 +110,28 @@ public final class Main {
             out.println("invalid: " + e.getMessage());
         }
         return true;
+    }
+
+    /**
+     * The server rejects commands without saying so (no rejection event), so
+     * the client gives the most likely reason itself, from its own view. Only a
+     * hint: the command is still sent, and the server's answer is the only one
+     * that counts.
+     */
+    static Optional<String> likelyRejection(String command, GameView view, String player) {
+        String reason;
+        if (!view.players().contains(player)) {
+            reason = "'%s' has not joined this game".formatted(player);
+        } else if (command.equals("start") && view.phase() != GameView.Phase.LOBBY) {
+            reason = "the game has already started";
+        } else if (command.equals("roll") && view.phase() != GameView.Phase.RUNNING) {
+            reason = view.phase() == GameView.Phase.LOBBY ? "the game has not started yet" : "the game is over";
+        } else if (command.equals("roll") && view.currentPlayer().filter(player::equals).isEmpty()) {
+            reason = "it is not %s's turn".formatted(player);
+        } else {
+            return Optional.empty();
+        }
+        return Optional.of("note: " + reason + " — the server will ignore this");
     }
 
     private static String arg(String[] args, int index, String fallback) {

@@ -11,6 +11,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.RecordDeserializationException;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -22,7 +24,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -30,9 +31,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code game.events} topic on its own virtual thread, folding this game's
  * events into a {@link GameView} and notifying a {@link GameListener}.
  *
- * <p>Every client instance uses a fresh consumer group reading from the
- * earliest offset, so a client started (or restarted) mid-game rebuilds the
- * whole view by replay — the Kafka log, not the client, is the source of truth.
+ * <p>Every client instance reads {@code game.events} from the beginning, with
+ * the partitions assigned by hand and no consumer group, so a client started
+ * (or restarted) mid-game rebuilds the whole view by replay — the Kafka log,
+ * not the client, is the source of truth.
  *
  * <p><b>Threading:</b> the event-loop virtual thread owns the consumer and the
  * fold; listener callbacks run on it. Command-sending methods and
@@ -132,7 +134,16 @@ public final class GameClient implements AutoCloseable {
         try (var consumer = new KafkaConsumer<>(
                 consumerConfig(), new StringDeserializer(), new JsonSerde<>(Event.class))) {
             activeConsumer.set(consumer);
-            consumer.subscribe(List.of(Topics.EVENTS));
+            List<PartitionInfo> infos = consumer.partitionsFor(Topics.EVENTS);
+            if (infos == null || infos.isEmpty()) {
+                log.error("topic '{}' does not exist — is the cluster up and init-topics done?", Topics.EVENTS);
+                return;
+            }
+            List<TopicPartition> partitions = infos.stream()
+                    .map(info -> new TopicPartition(Topics.EVENTS, info.partition()))
+                    .toList();
+            consumer.assign(partitions);
+            consumer.seekToBeginning(partitions);
             while (running) {
                 for (ConsumerRecord<String, Event> record : poll(consumer)) {
                     Event event = record.value();
@@ -178,12 +189,14 @@ public final class GameClient implements AutoCloseable {
         return props;
     }
 
-    /** Fresh group + earliest offset: every client start is a full replay. */
+    /**
+     * No group: partitions are assigned by hand and read from the beginning, so
+     * every client start is a full replay and nothing is ever stored on the
+     * brokers on the client's behalf — the same setup as the server's replay.
+     */
     private Properties consumerConfig() {
         var props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "goose-client-" + UUID.randomUUID());
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         return props;
     }

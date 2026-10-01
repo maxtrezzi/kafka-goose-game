@@ -2,11 +2,16 @@
 # Each node is both controller and broker ("combined mode" — fine for dev).
 # No volumes on purpose: `docker compose down` gives you a fresh cluster.
 #
+#   docker compose up -d                          # the cluster only (run the
+#                                                 # server and clients with Maven)
+#   docker compose --profile game up -d --build   # the cluster + the server
+#   docker compose run --rm tui game-1 alice      # a player, in this terminal
+#
 #   Host access:      localhost:9092 / 9094 / 9096
 #   In-network:       kafka-1:29092 / kafka-2:29092 / kafka-3:29092
 
 x-kafka-common: &kafka-common
-  image: apache/kafka:4.3.0
+  image: apache/kafka:4.3.1
   healthcheck:
     test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 > /dev/null 2>&1"]
     interval: 10s
@@ -66,7 +71,7 @@ services:
 
   # One-shot: creates the game topics, prints them, exits 0
   init-topics:
-    image: apache/kafka:4.3.0
+    image: apache/kafka:4.3.1
     container_name: goose-init-topics
     depends_on:
       kafka-1:
@@ -86,3 +91,32 @@ services:
             --config min.insync.replicas=2
           $$BIN/kafka-topics.sh --bootstrap-server kafka-1:29092 --describe --topic $$topic
         done
+
+  # The authoritative server. Behind a profile so that a plain
+  # `docker compose up -d` still starts the cluster alone, for running the
+  # server from Maven: two servers in the same group would split the games
+  # between them, which the single-instance design does not support.
+  server:
+    profiles: ["game"]
+    build:
+      context: .
+      target: server
+    image: kafka-goose-game/server
+    container_name: goose-server
+    command: ["kafka-1:29092,kafka-2:29092,kafka-3:29092"]
+    depends_on:
+      init-topics:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # A terminal client. Meant for `docker compose run --rm tui <gameId> <player>`,
+  # which gives it this terminal; `up` never starts it.
+  tui:
+    profiles: ["tui"]
+    build:
+      context: .
+      target: tui
+    image: kafka-goose-game/tui
+    stdin_open: true
+    tty: true
+    command: ["game-1"]

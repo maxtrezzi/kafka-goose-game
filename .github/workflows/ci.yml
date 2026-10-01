@@ -45,15 +45,15 @@ jobs:
           java-version: "21"
           cache: maven
 
-      # `verify` runs both layers: the 104 unit tests through surefire in every
-      # module, and the end-to-end test through failsafe in `server`, which
-      # starts a real Kafka broker with Testcontainers. Docker is already
+      # `verify` runs both layers: the unit tests through surefire in every
+      # module, and the integration tests through failsafe in `server` (the
+      # end-to-end game) and `client-core` (GameClient against a broker), which
+      # start a real Kafka broker with Testcontainers. Docker is already
       # installed on the runner, so nothing extra is needed for it.
       #
       # This also covers the two things a local build cannot: it builds from a
-      # clean clone, with an empty local repository, and it runs the E2E
-      # against whatever Docker version the runner ships — which is what the
-      # api.version property in server/pom.xml exists to cope with.
+      # clean clone, with an empty local repository, and it runs the
+      # integration tests against whatever Docker version the runner ships.
       - name: mvn verify
         run: mvn -B verify
 
@@ -64,6 +64,58 @@ jobs:
           name: test-reports
           path: "**/target/*-reports/"
           if-no-files-found: ignore
+
+  demo:
+    name: Docker demo
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # The README's one-command demo, run for real: the 3-broker cluster and
+      # the server from docker-compose.yml, then two players from the `tui`
+      # image joining and starting a game. It checks what the unit and
+      # integration tests cannot: the Dockerfile, the compose wiring, and the
+      # 3-broker cluster with its replication settings.
+      - name: Start the cluster and the server
+        run: docker compose --profile game up -d --build
+
+      - name: Wait for the server to finish its replay
+        run: |
+          for i in $(seq 60); do
+            docker logs goose-server 2>&1 | grep -q "replayed" && break
+            sleep 2
+          done
+          docker logs goose-server 2>&1 | grep "replayed"
+
+      - name: Two players join and start a game
+        run: |
+          printf 'join\nquit\n'  | docker compose run --rm -T tui ci-game alice
+          printf 'join\nquit\n'  | docker compose run --rm -T tui ci-game bob
+          printf 'start\nquit\n' | docker compose run --rm -T tui ci-game alice
+
+      - name: The game started, according to the event log
+        run: |
+          for i in $(seq 30); do
+            docker exec goose-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
+              --bootstrap-server localhost:29092 --topic game.events \
+              --from-beginning --timeout-ms 5000 2>/dev/null > events.txt || true
+            grep -q '"type":"GameStarted"' events.txt && break
+            sleep 2
+          done
+          cat events.txt
+          grep -q '"type":"GameStarted"' events.txt
+
+      - name: Server log
+        if: always()
+        run: docker logs goose-server || true
+
+      - name: Stop everything
+        if: always()
+        run: docker compose --profile game down
 
   docs:
     name: Documentation

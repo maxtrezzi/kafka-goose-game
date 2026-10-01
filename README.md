@@ -157,9 +157,15 @@ arguments are `[gameId [player]]`.
 ## Build & test
 
 ```bash
-mvn test        # unit tests only — no Docker needed
-mvn verify      # + the integration tests (each starts a throwaway Kafka container)
+mvn test              # unit tests only — no Docker needed
+mvn verify            # + the integration tests (each starts a throwaway Kafka container)
+mvn -Pmutation test   # + mutation testing with PIT (about a minute, no Docker)
 ```
+
+The mutation-testing reports are written to
+`<module>/target/pit-reports/index.html`; what they found, and why the few
+remaining mutants survive, is in
+[chapter 8](docs/08-testing.md#mutation-testing-are-the-tests-checking-anything).
 
 Building one module on its own needs an extra flag: `mvn -pl engine -am test`.
 Without `-am`, Maven looks for the other modules in the local repository, where

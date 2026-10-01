@@ -208,6 +208,17 @@ Source: [The wrong
 abstraction](https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction)
 (Sandi Metz)
 
+### Mutation testing
+
+A way to test the tests. A tool such as PIT makes small changes to the code —
+flips a comparison, removes a condition, returns an empty value — and runs the
+test suite against each changed version (a *mutant*). If some test fails, the
+mutant is *killed*; if every test still passes, it *survived*, which shows a
+behaviour that no test checks. A mutant that changes the code without changing
+what it does is called *equivalent*, and no test can kill it.
+
+Source: [PIT documentation](https://pitest.org/)
+
 ### Seam
 
 A place in a program where you can change what happens without editing the code

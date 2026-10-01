@@ -9,7 +9,7 @@
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Kafka Goose Game</name>
-  <description>Multiplayer Game of the Goose over Apache Kafka — a learning project</description>
+  <description>Multiplayer Game of the Goose on plain Java 21 and Apache Kafka 4.x: event sourcing with the raw client APIs</description>
 
   <modules>
     <module>protocol</module>
@@ -23,11 +23,11 @@
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <kafka-clients.version>4.3.0</kafka-clients.version>
-    <jackson.version>2.19.0</jackson.version>
+    <kafka-clients.version>4.3.1</kafka-clients.version>
+    <jackson.version>2.22.3</jackson.version>
     <slf4j.version>2.0.17</slf4j.version>
-    <junit.version>5.12.2</junit.version>
-    <testcontainers.version>1.21.3</testcontainers.version>
+    <junit.version>6.1.3</junit.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
   </properties>
 
   <dependencyManagement>
@@ -64,7 +64,7 @@
     </dependencies>
   </dependencyManagement>
 
-  <!-- Every module gets JUnit 5 for tests -->
+  <!-- Every module gets JUnit Jupiter for tests -->
   <dependencies>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -81,6 +81,10 @@
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.14.0</version>
         </plugin>
+        <!-- Surefire and failsafe stay on 3.5.3: failsafe 3.6.0 runs the *IT
+             classes even with -DskipTests, which breaks `mvn -DskipTests
+             install` on a machine without Docker (ISSUES.md #9). The two
+             plugins are released together, so they move together. -->
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
@@ -94,7 +98,12 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>exec-maven-plugin</artifactId>
-          <version>3.5.0</version>
+          <version>3.6.4</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-dependency-plugin</artifactId>
+          <version>3.11.0</version>
         </plugin>
       </plugins>
     </pluginManagement>

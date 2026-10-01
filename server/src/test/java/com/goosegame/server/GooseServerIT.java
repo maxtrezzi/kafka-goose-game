@@ -1,5 +1,6 @@
 package com.goosegame.server;
 
+import com.goosegame.client.GameView;
 import com.goosegame.engine.DiceRoller;
 import com.goosegame.engine.GameState;
 import com.goosegame.protocol.Command;
@@ -50,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 class GooseServerIT {
 
     @Container
-    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.0");
+    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
 
     private static final String GAME = "e2e";
     private static final Duration GAME_DEADLINE = Duration.ofSeconds(90);
@@ -98,6 +99,9 @@ class GooseServerIT {
             assertEquals(GameState.Phase.FINISHED, state.phase());
             assertEquals(Optional.of("alice"), state.winner());
             assertEquals(Map.of("alice", 63, "bob", 21), state.positions());
+
+            // and the client's fold agrees with the server's, event by event
+            assertFoldsAgree(history);
         } finally {
             server.close();
             serverThread.join(Duration.ofSeconds(10));
@@ -152,6 +156,29 @@ class GooseServerIT {
             state = state.apply(event);
         }
         return state;
+    }
+
+    /**
+     * The engine's {@link GameState} and the client's {@link GameView} are two
+     * separate folds of the same log, written twice on purpose. Nothing in the
+     * compiler makes them agree; this does, after every single event of a real
+     * game.
+     */
+    private static void assertFoldsAgree(List<Event> history) {
+        GameState state = GameState.newGame(GAME);
+        GameView view = GameView.initial(GAME);
+        for (int i = 0; i < history.size(); i++) {
+            Event event = history.get(i);
+            state = state.apply(event);
+            view = view.apply(event);
+            String where = "after event #%d %s".formatted(i, event);
+            assertEquals(state.phase().name(), view.phase().name(), where);
+            assertEquals(state.players(), view.players(), where);
+            assertEquals(state.positions(), view.positions(), where);
+            assertEquals(state.stuck(), view.stuck(), where);
+            assertEquals(state.currentPlayer(), view.currentPlayer(), where);
+            assertEquals(state.winner(), view.winner(), where);
+        }
     }
 
     private static DiceRoller scriptedDice() {

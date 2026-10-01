@@ -39,9 +39,11 @@ section "Consumer Position"
 ### Consumer group
 
 A set of consumers that share the work of reading a topic: each partition goes
-to exactly one member of the group. Two consumers in *different* groups both
-receive every message, which is why every client in this project reads the full
-event log while the server reads each command once.
+to exactly one member of the group, and the group remembers how far it has
+read (its committed offsets). In this project only the server's command loop
+uses a group, so each command is handled once. The server's replay and every
+client use no group at all: they assign every partition to themselves and read
+the full event log from the beginning.
 
 Source: [Kafka documentation](https://kafka.apache.org/documentation/),
 section "Consumers"

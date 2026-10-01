@@ -77,8 +77,8 @@ Correctness:
   into at-most-once, is switched off on purpose.
 - **The same business rule in two places** → the rules live once, in `decide`,
   and the fold trusts the log. The one repetition that *is* deliberate, the
-  client's fold, is explained, kept in check by the shared protocol tests, and
-  written down: the choice between harmful repetition and a shared abstraction
+  client's fold, is explained, kept in check by the end-to-end test that
+  compares both folds after every event, and written down: the choice between harmful repetition and a shared abstraction
   that does not fit was made openly. See [coincidental
   duplication](11-glossary.md#coincidental-duplication).
 - **Rules that can loop for ever** → goose chains are proved to end, and a roll

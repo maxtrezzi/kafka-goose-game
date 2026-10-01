@@ -39,8 +39,9 @@ codebase that is easiest to argue with, so the reasoning is set out in full.
 - **The message format, not a shared class, is the contract.** Server and
   client agree because they use the same sealed `Event` types, and both folds
   are switches that must cover every case. A new event type breaks *both*
-  builds until both folds handle it, and the shared protocol tests check the
-  rest.
+  builds until both folds handle it. The compiler cannot check that both
+  handle it *the same way*, so the end-to-end test does: it folds a real game
+  with both and compares them after every event ([chapter 8](08-testing.md)).
 
 **What it costs:** the same fold logic exists twice, about 100 lines, and if
 the two ever behaved differently, a client would draw a board the server does
@@ -59,14 +60,24 @@ list for the screen, not a history: the history is the topic.
 
 ## Replay-on-start: the client keeps nothing
 
-Every `GameClient` start creates a consumer with a **fresh group id**
-(`goose-client-<uuid>`), `auto.offset.reset=earliest`, auto-commit off,
-and offsets that are never committed. So a client started, or restarted, in
-the middle of a game rebuilds its whole view by reading `game.events` from the
-beginning. Killing a client and watching the board come back is not a feature
-added on top: it is simply what a [read
-model](11-glossary.md#cqrs-and-the-read-model) does. The group id exists only
-because `subscribe()` demands one, and nothing is ever stored under it.
+Every `GameClient` start creates a consumer with **no consumer group**: it
+looks up the partitions of `game.events` with `partitionsFor`, assigns all of
+them to itself with `assign()`, and calls `seekToBeginning()` — the same setup
+as the server's replay ([chapter 4](04-server.md)). Auto-commit is off and
+nothing is ever committed. So a client started, or restarted, in the middle of
+a game rebuilds its whole view by reading `game.events` from the beginning.
+Killing a client and watching the board come back is not a feature added on
+top: it is simply what a [read model](11-glossary.md#cqrs-and-the-read-model)
+does.
+
+The first version used `subscribe()` with a fresh group id per run
+(`goose-client-<uuid>`) and `auto.offset.reset=earliest`. That works too, but
+the group existed only because `subscribe()` requires one: it shared nothing,
+stored nothing, and still left an empty group on the brokers for every client
+run. A [consumer group](11-glossary.md#consumer-group) is for sharing work and
+remembering a position, and a client needs neither. If the topic does not
+exist, the client logs an error and its event loop ends, instead of waiting
+for ever.
 
 Events are filtered by `gameId` in the client, because all games share the
 topic, and [tombstones](11-glossary.md#tombstone) are skipped.
@@ -80,7 +91,9 @@ topic, and [tombstones](11-glossary.md#tombstone) are skipped.
   would waste one. The `view` field is `volatile` so that any thread can read
   the latest value through `view()`. That is safe because `GameView` cannot
   change: the only thing that has to work is making the new value visible.
-- **Listener methods run on the event-loop thread, in log order.** The rule is
+- **Listener methods run on the event-loop thread, in log order.** For each
+  event the view is folded first, then `onEvent` and `onViewUpdated` are
+  called, so both already see the new state. The rule is
   written on `GameListener`: a UI that needs its own thread must move the work
   there itself. An exception thrown by a listener is caught, logged and passed
   over, because a drawing bug in a UI must not stop the flow of events
@@ -154,13 +167,16 @@ the server.
 - **A UI exception stopping the flow of data** — the listener is isolated.
 - **Keeping offsets on the client** — there is nothing to move and nothing to
   corrupt: a restart simply reads everything again.
+- **A consumer group that shares nothing** — the client assigns its partitions
+  itself instead of creating a group per run only to satisfy `subscribe()`.
 - **Using one consumer from several threads** — it stays in one thread and is
   stopped with `wakeup()`, as in the server.
 
 ## Decisions (from DECISIONS.md)
 
 - `GameView` repeats the fold on purpose, for the reasons given above.
-- Every client run uses a new group and reads the whole log from the start.
+- Every client run reads the whole log from the start, with no consumer
+  group.
 - Listener methods run on the event-loop thread, and this is documented.
 - `connect()` is a factory method, so the constructor starts no thread.
 - The producer is flushed after every command.

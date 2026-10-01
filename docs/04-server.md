@@ -17,7 +17,7 @@ run():
                                  → commit offsets (only after produce confirmed)
 ```
 
-It depends on `engine`, and through it on `protocol`, and is about 280 lines
+It depends on `engine`, and through it on `protocol`, and is about 290 lines
 including configuration. Keeping the rules pure is what allows this outer layer
 to stay this small.
 
@@ -55,10 +55,14 @@ immediately, instead of watching a replay that silently finds nothing.
 
 Per poll batch:
 
-1. Every command goes through `handleCommand`, which fetches the game's state
-   or creates it. It uses `computeIfAbsent`, which looks up and inserts in one
-   step, instead of checking first and then inserting. Then it calls
-   `engine.decide(state, command, dice)`.
+1. Every command goes through `handleCommand`, which fetches the game's state,
+   or starts from an empty game *without storing it*
+   (`getOrDefault(gameId, GameState.newGame(gameId))`). Then it calls
+   `engine.decide(state, command, dice)`. A game enters the map only in step 3,
+   through `applyEvent`, once a command for it has been accepted. The first
+   version used `computeIfAbsent`, which stored the empty game straight away:
+   every rejected command for an unknown `gameId` left an entry behind, so a
+   client sending `RollDice` for made-up games could fill the server's memory.
 2. Rejected commands (empty event list) are logged and dropped.
 3. If the command is accepted, each event is sent with `producer.send(...)`,
    using `event.gameId()` as the key, and the returned futures are kept. The
@@ -72,9 +76,18 @@ Per poll batch:
 The order of steps 4 and 5 is the whole delivery story. Offsets are never
 committed for commands whose events might not have reached the log. A crash
 anywhere before step 5 means those commands are delivered again. The engine
-refuses most of the repeats, but a repeated `RollDice` rolls new dice: that is
-the known at-least-once gap
+sees each repeat against a state that already contains its events, and rejects
+it. The one exception is a `RollDice` whose player also holds the next turn,
+because every other player is stuck: that repeat rolls new dice. That is the
+known at-least-once gap
 ([chapter 1](01-architecture.md#delivery-guarantees-at-least-once-with-the-limits-stated)).
+
+A write that fails for good is handled differently from a bad message: the
+exception from `Future.get()` leaves `run()` and the process stops. Nothing is
+lost — the offsets were not committed and the state is rebuilt from the log on
+the next start — but starting it again is the job of whatever supervises the
+process. In Docker Compose that is `restart: unless-stopped`; started from
+Maven, it is the person at the keyboard.
 
 Producer settings: `acks=all` and
 [`enable.idempotence=true`](11-glossary.md#idempotent-producer). A confirmed
@@ -184,6 +197,8 @@ than one nobody noticed: for now, run a single server.
 ## Decisions (from DECISIONS.md)
 
 - One thread owns all the state.
+- A game is stored only once a command for it is accepted.
+- A failed write stops the server; restarting it is left to a supervisor.
 - At-least-once was chosen over exactly-once, with the reasoning written down.
 - Replay assigns partitions by hand instead of joining a group.
 - Local state can always be thrown away and rebuilt from the log.

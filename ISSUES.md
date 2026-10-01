@@ -22,7 +22,7 @@ were never `mvn install`ed.
 **Fix:** build with the reactor: `mvn -pl engine -am test` (`-am` = also make
 dependencies). Applies to every module: use `-pl server -am verify`, etc.
 
-## 3. `Board.resolve(x, 0)` would spin forever (Step 4, found by skill review)
+## 3. `Board.resolve(x, 0)` would spin forever (Step 4, found in code review)
 
 **Symptom:** `resolve` is public; a roll of 0 landing on a goose square repeats a
 0-step hop infinitely (OOM building the moves list). Unreachable through
@@ -40,8 +40,10 @@ supported API version is 1.40` — while `docker info` works fine from the shell
 
 **Cause:** the local Docker daemon is 29.6.0, whose minimum API version (1.40)
 rejects the API-1.32 requests made by the docker-java client that Testcontainers
-1.21.3 **shades inside its own jar**. 1.21.3 is the latest Testcontainers release
-(checked Maven Central 2026-07-03), so no upgrade available.
+1.21.3 **shades inside its own jar**. At the time this was taken to mean no fix
+was available upstream. That was wrong: Testcontainers 1.21.4 and the 2.0.x line
+were already on Maven Central (its metadata was last updated in April 2026),
+and 2.0.5 asks for API 1.44 by default.
 
 **Tried and failed:**
 - `DOCKER_API_VERSION=1.44` env var → ignored by the shaded client's config path.
@@ -54,7 +56,12 @@ the failsafe plugin config in `server/pom.xml`:
 `<systemPropertyVariables><api.version>1.44</api.version></systemPropertyVariables>`.
 Drop it once a Testcontainers release raises its default API version.
 
-## 5. Jackson's unknown-field default was silently in force (Step 3, found by skill review)
+**Later:** upgraded to Testcontainers 2.0.5, whose default is API 1.44, and the
+property was removed. The upgrade also renamed the modules
+(`testcontainers-kafka`, `testcontainers-junit-jupiter`). **Lesson:** "no upgrade
+available" is a claim to check in the repository metadata, not to assume.
+
+## 5. Jackson's unknown-field default was silently in force (Step 3, found in code review)
 
 **Symptom:** not a failure — a landmine. `FAIL_ON_UNKNOWN_PROPERTIES=true` (Jackson's
 default) was active but chosen by nobody and tested by nothing: the first added
@@ -81,7 +88,7 @@ corner case Step 4 had documented as "faithful, if merciless" and accepted as
 improbable. One game later it fired — with 2 players it is a live risk, not a
 curiosity.
 
-**Fix (user decision):** rule amendment — **the last free player never gets
+**Fix (the author's decision):** rule amendment — **the last free player never gets
 trapped**. `GameEngine.freezesTheGame(...)` waives the trap when landing on an
 unoccupied well/prison while every other player is held in one (inn players count
 as recoverable). Pinned by `lastFreePlayerIsNeverTrapped` and
@@ -107,3 +114,22 @@ and watch the ISR heal to `1,2,3` on every partition.
 **Lesson:** timing-based fault injection against a fast workload silently tests
 nothing; making the fault a *precondition* instead of an *interruption* removes the
 race entirely.
+
+## 9. Failsafe 3.6.0 runs the integration tests even with `-DskipTests`
+
+**Symptom:** after moving surefire and failsafe from 3.5.3 to 3.6.0,
+`mvn -DskipTests install` — the README's own build step — failed on a machine
+without Docker: failsafe started `GameClientIT`, Testcontainers found no Docker,
+and `failsafe:verify` failed the build. Surefire printed "Tests are skipped" as
+before; failsafe did not.
+
+**Check:** the same command with failsafe 3.5.3 skips the `*IT` classes and
+succeeds. Only the plugin version changed.
+
+**Fix:** surefire and failsafe stay on 3.5.3 (they are released together), with
+a comment in the parent POM pointing here. Revisit with the next failsafe
+release.
+
+**Lesson:** an upgrade can change behaviour that no test covers — here, a
+command line in the README. Running the documented commands after an upgrade is
+part of the upgrade.

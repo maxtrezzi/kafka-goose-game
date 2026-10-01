@@ -45,6 +45,14 @@ landed on 63, bob is still stuck in the well.*
   returns events and has no side effects; dice and clock are injected. The same
   seam drives a fully deterministic end-to-end game against a real broker in
   Testcontainers.
+- **Tests that are themselves tested.** Mutation testing with
+  [PIT](https://pitest.org/) changes the code in small ways and checks that a
+  test fails each time: 100% of the mutants are killed in `protocol` and
+  `client-core`, 98% in the terminal UI, 93% in the rules engine. Each mutant
+  that survives is explained as equivalent or unreachable
+  ([chapter 8](docs/08-testing.md#mutation-testing-are-the-tests-checking-anything)).
+  The first run found two tests that passed for the wrong reason, and rules
+  that no test checked.
 - **Found by playing, not by unit tests.** The first live game froze with both
   players trapped (well + prison), which led to a rule change
   ([ISSUES.md #7](ISSUES.md#7-the-documented-wellprison-deadlock-happened-in-the-first-live-game-step-7));
